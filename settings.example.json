@@ -1,0 +1,17 @@
+{
+  "activeProviderId": "example",
+  "appScanDepth": 2,
+  "appScanPaths": [],
+  "commandOrder": [],
+  "conversationPinned": false,
+  "disabledCommands": [],
+  "homeUi": "classic",
+  "hotkey": "Alt+Q",
+  "proxyEnabledForGoogle": false,
+  "proxyUrl": "",
+  "theme": "white",
+  "translateModel": "",
+  "translateNoThink": true,
+  "webSearch": true,
+  "webSearchEngine": "auto"
+}

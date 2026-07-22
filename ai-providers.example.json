@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "example",
+      "name": "Example Provider",
+      "format": "openai_compatible",
+      "baseUrl": "https://api.example.com/v1",
+      "apiKey": "YOUR_API_KEY",
+      "headers": {},
+      "models": [
+        "example-model"
+      ],
+      "modelLabels": {
+        "example-model": "Example Model"
+      },
+      "selectedModel": "example-model",
+      "requestBody": {},
+      "extraOptions": {},
+      "modelConfigs": {}
+    }
+  ]
+}
