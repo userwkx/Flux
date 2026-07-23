@@ -1,5 +1,6 @@
 /node_modules/
 /src-tauri/target/
+/src-tauri/*-target/
 /src-tauri/gen/
 /src-tauri/65001
 /icons-cache/
@@ -13,6 +14,7 @@
 /ball-run.*
 /.agents/
 /.codex/
+/.cortexkit/
 /.vscode/
 /.idea/
 /.env
@@ -22,3 +24,5 @@
 *.key
 .DS_Store
 Thumbs.db
+/playwright-report/
+/test-results/

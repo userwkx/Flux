@@ -1,0 +1,62 @@
+<div class="shell">
+  <div class="glow glow-a"></div>
+  <div class="glow glow-b"></div>
+  <div class="drag-bar" title="拖动窗口"><span class="drag-pills"></span></div>
+
+  <header class="cards-chrome" id="cards-chrome">
+    <div class="cards-chrome-left"><span class="cards-chrome-title">Flux</span></div>
+    <div class="cards-chrome-right">
+      <button type="button" id="btn-cards-min" class="win-btn" title="最小化" aria-label="最小化"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M1 5h8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></button>
+      <button type="button" id="btn-cards-max" class="win-btn" title="最大化" aria-label="最大化"><svg width="10" height="10" viewBox="0 0 10 10"><rect x="1.5" y="1.5" width="7" height="7" rx="0.5" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></button>
+      <button type="button" id="btn-cards-close" class="win-btn win-close" title="关闭" aria-label="关闭"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 2l6 6M8 2L2 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg></button>
+    </div>
+  </header>
+
+  <div id="page-main" class="page">
+    <header class="search-bar">
+      <div class="search-icon" aria-hidden="true">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M20 20 16.5 16.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </div>
+      <span id="mode-prefix" class="ai-prefix mode-prefix hidden">AI:</span>
+      <input id="q" type="text" placeholder="搜索应用…  输入 / 选择模式" autocomplete="off" spellcheck="false" autofocus />
+      <button type="button" class="quick-web-button hidden" id="quick-web-button" title="联网搜索" aria-label="开启联网搜索" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4M4 11h14M11 4a11 11 0 0 1 0 14M11 4a11 11 0 0 0 0 14"/></svg><span>联网</span>
+      </button>
+      <button type="button" id="btn-settings" class="icon-btn" title="设置">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 13a7.8 7.8 0 0 0 .05-2l2.05-1.6-2-3.46-2.45.7a7.7 7.7 0 0 0-1.73-1L15 3h-6l-.32 2.64a7.7 7.7 0 0 0-1.73 1l-2.45-.7-2 3.46L4.55 11a7.8 7.8 0 0 0 0 2l-2.05 1.6 2 3.46 2.45-.7a7.7 7.7 0 0 0 1.73 1L9 21h6l.32-2.64a7.7 7.7 0 0 0 1.73-1l2.45.7 2-3.46L19.4 13Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+      </button>
+    </header>
+
+    <section id="recent-section" class="section">
+      <div class="section-title"><span>最近打开</span><span class="muted" id="recent-count">0</span></div>
+      <div id="recent" class="grid"></div>
+    </section>
+
+    <section id="builtin-section" class="section">
+      <div class="section-title"><span>自带功能</span></div>
+      <div id="builtins" class="grid">
+        <button type="button" class="recent-card builtin-card" id="btn-builtin-ai" title="AI 对话"><img class="icon" src="assets/gpt.svg" alt="AI" draggable="false"/><span class="name">AI</span></button>
+        <button type="button" class="recent-card builtin-card" id="btn-builtin-fy" title="翻译"><span class="icon builtin-letter-icon">FY</span><span class="name">翻译</span></button>
+        <button type="button" class="recent-card builtin-card" id="btn-builtin-file" title="打开文件"><span class="icon builtin-letter-icon is-file">FILE</span><span class="name">文件</span></button>
+      </div>
+    </section>
+
+    <section id="list-section" class="section grow hidden">
+      <div class="section-title"><span id="list-title">搜索结果</span><span class="muted" id="list-count">0</span></div>
+      <div id="list" class="list"></div>
+    </section>
+
+    <div id="idle-hint" class="idle-hint">搜索应用 · 输入 <code>/</code> 选模式 · <code>/ai</code> 对话 · <code>/fy</code> 翻译</div>
+    <div id="slash-menu" class="slash-menu hidden" role="listbox"></div>
+    <div id="ai-quick-host" class="command-view-host"></div>
+    <div id="command-view-host" class="command-view-host"></div>
+  </div>
+
+  <div class="recent-context-menu hidden" id="recent-context-menu" role="menu">
+    <button type="button" id="btn-remove-recent" role="menuitem">从最近打开中移除</button>
+  </div>
+
+  <div id="ai-conversation-host" class="command-view-host"></div>
+  <div id="ai-viewer-host" class="command-view-host"></div>
+  <div id="page-settings" class="page page-settings hidden" data-settings-host></div>
+</div>

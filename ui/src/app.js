@@ -1,6 +1,9 @@
 import { commandRegistry } from "./commands/index.js";
-import { createChatRenderer } from "./features/chat-renderer.js";
-import { createFileModeController } from "./features/file-mode.js";
+import { createCommandHost } from "./commands/host.js";
+import { mountShell } from "./shell/shell.js";
+import { createSettingsController } from "./shell/settings.js";
+import { createChatRenderer } from "./features/chat/renderer.js";
+import { createChatRuntime } from "./features/chat/runtime.js";
 import { enhanceCodeBlocks, escapeHtml, renderMarkdown } from "./shared/markdown.js";
 import {
   defaultEfforts,
@@ -14,6 +17,13 @@ import {
 } from "./shared/provider-utils.js";
 
 const api = window.launcher;
+const chatRuntime = createChatRuntime(api);
+await mountShell(document.getElementById("app"));
+const commandHost = createCommandHost({
+  host: document.getElementById("command-view-host"),
+  context: { api },
+});
+await commandHost.prepareAll(commandRegistry.listAll());
 
 const els = {
   q: document.getElementById("q"),
@@ -21,8 +31,12 @@ const els = {
   recent: document.getElementById("recent"),
   recentSection: document.getElementById("recent-section"),
   recentCount: document.getElementById("recent-count"),
+  recentContextMenu: document.getElementById("recent-context-menu"),
+  btnRemoveRecent: document.getElementById("btn-remove-recent"),
   builtinSection: document.getElementById("builtin-section"),
   btnBuiltinAi: document.getElementById("btn-builtin-ai"),
+  btnBuiltinFy: document.getElementById("btn-builtin-fy"),
+  btnBuiltinFile: document.getElementById("btn-builtin-file"),
   modePrefix: document.getElementById("mode-prefix"),
   slashMenu: document.getElementById("slash-menu"),
   list: document.getElementById("list"),
@@ -31,13 +45,6 @@ const els = {
   listCount: document.getElementById("list-count"),
   idleHint: document.getElementById("idle-hint"),
   aiSection: document.getElementById("ai-section"),
-  fileSection: document.getElementById("file-section"),
-  fileStatus: document.getElementById("file-status"),
-  fileModeAuto: document.getElementById("file-mode-auto"),
-  fileModeBrowser: document.getElementById("file-mode-browser"),
-  fileAllowFileAccess: document.getElementById("file-allow-file-access"),
-  fileAccessOption: document.getElementById("file-access-option"),
-  fileModeNote: document.getElementById("file-mode-note"),
   aiThread: document.getElementById("ai-thread"),
   aiStatus: document.getElementById("ai-status"),
   btnAiStop: document.getElementById("btn-ai-stop"),
@@ -124,6 +131,7 @@ const els = {
   aboutDataDir: document.getElementById("about-data-dir"),
   hotkeyInput: document.getElementById("hotkey-input"),
   btnSaveHotkey: document.getElementById("btn-save-hotkey"),
+  settingsToast: document.getElementById("settings-toast"),
   btnPickModel: document.getElementById("btn-pick-model"),
   btnAddModel: document.getElementById("btn-add-model"),
   modelPicker: document.getElementById("model-picker"),
@@ -131,8 +139,20 @@ const els = {
   pvModelLabel: document.getElementById("pv-model-label"),
   btnCloseProvider: document.getElementById("btn-close-provider"),
   btnCancelProvider: document.getElementById("btn-cancel-provider"),
+  providerCancelConfirm: document.getElementById("provider-cancel-confirm"),
+  btnProviderContinue: document.getElementById("btn-provider-continue"),
+  btnProviderConfirmCancel: document.getElementById("btn-provider-confirm-cancel"),
   providerDialogTitle: document.getElementById("provider-dialog-title"),
 };
+
+const settingsView = createSettingsController(els.pageSettings, {
+  onPanelChange: (name) => {
+    settingsPanel = name;
+    if (name === "ai") refreshAiOverview();
+    if (name === "commands") renderCommandSettings();
+    if (name === "about" || name === "general") refreshProxyStatus();
+  },
+});
 
 /** @type {any[]} */
 let apps = [];
@@ -146,6 +166,9 @@ const pendingIconTargets = new Set();
 const requestedIconTargets = new Set();
 const iconRetryCounts = new Map();
 let suppressRecentClick = false;
+let recentContextTarget = "";
+let launcherResizeFrame = 0;
+let launcherViewportWidth = window.innerWidth;
 const iconObserver = new IntersectionObserver(
   (entries) => {
     for (const entry of entries) {
@@ -191,6 +214,10 @@ function currentModeDef() {
 }
 /** main | settings | viewer | conversation */
 let page = "main";
+let settingsReturnPage = "main";
+let settingsReturnFocus = null;
+let settingsWindowPromise = Promise.resolve();
+let viewerWindowPromise = Promise.resolve();
 let theme = "white";
 let viewerOpen = false;
 let conversationModeOpen = false;
@@ -236,6 +263,8 @@ const newProviderIds = new Set();
 /** last fetched remote model ids (not yet all added) */
 let lastFetchedModels = [];
 let hotkeyCapturing = false;
+let hotkeyFeedbackTimer = 0;
+let settingsToastTimer = 0;
 
 /** @type {{role:string, content:string, attachments?:any[]}[]} */
 let chatHistory = [];
@@ -246,11 +275,6 @@ let streamRenderFrame = 0;
 let conversations = [];
 let currentConversationId = null;
 let viewerMarkdown = "";
-const fileMode = createFileModeController(els);
-const renderFileSection = () => fileMode.render();
-const setFileOpenMode = (nextMode) => fileMode.setOpenMode(nextMode);
-const setFileAllowFileAccess = (enabled) => fileMode.setAllowFileAccess(enabled);
-
 function subseq(hay, needle) {
   if (!hay || !needle) return false;
   let i = 0;
@@ -269,11 +293,15 @@ function visibleApps() {
   return apps.filter((a) => !isClutter(a));
 }
 
+function launcherGridColumnCount() {
+  const width = Math.max(0, (els.pageMain?.clientWidth || window.innerWidth) - 28);
+  const minimum = Math.min(88, Math.max(1, (width - 16) / 5));
+  return Math.max(5, Math.floor((width + 4) / (minimum + 4)));
+}
+
 function visibleRecent() {
   const list = recent.filter((a) => !isClutter(a));
-  // cards: about 2 rows (width-adaptive cols); classic: a bit more
-  const max = homeUi === "cards" ? 12 : 15;
-  return list.slice(0, max);
+  return list.slice(0, launcherGridColumnCount() * 2);
 }
 
 /** Slash command mode: fixed visual prefix /ai|/fy; input holds body only */
@@ -369,6 +397,7 @@ function showSlashMenu(filter = "") {
 function enterCommandMode(modeId, opts = {}) {
   const def = commandRegistry.get(modeId) || resolveSlashMode(modeId);
   if (!def || !isCommandEnabled(def.id)) return false;
+  const shouldResize = mode !== "command";
   const { clearBody = true, keepHistory = false } = opts;
   // switching mode resets chat unless keepHistory
   if (!keepHistory || cmdMode !== def.id) {
@@ -396,6 +425,7 @@ function enterCommandMode(modeId, opts = {}) {
   const st = document.querySelector("#ai-section .section-title > span:first-child");
   if (st) st.textContent = def.title;
   render();
+  if (shouldResize) scheduleFit();
   return true;
 }
 
@@ -405,6 +435,7 @@ function enterAiInputMode(opts = {}) {
 }
 
 function exitCommandMode() {
+  const shouldResize = mode === "command" || !!cmdMode;
   hideSlashMenu();
   els.modePrefix?.classList.add("hidden");
   if (els.modePrefix) {
@@ -421,6 +452,7 @@ function exitCommandMode() {
   updateQuickWebButton();
   const st = document.querySelector("#ai-section .section-title > span:first-child");
   if (st) st.textContent = "AI 对话";
+  if (shouldResize) scheduleFit();
 }
 
 function exitAiInputMode() {
@@ -637,6 +669,54 @@ function setupRecentDrag() {
   els.recent.addEventListener("pointercancel", finish);
 }
 
+function closeRecentContextMenu() {
+  recentContextTarget = "";
+  els.recentContextMenu?.classList.add("hidden");
+}
+
+function openRecentContextMenu(event, app) {
+  if (!els.recentContextMenu || !app?.target) return;
+  event.preventDefault();
+  event.stopPropagation();
+  recentContextTarget = app.target;
+  els.recentContextMenu.classList.remove("hidden");
+  const shellRect = document.querySelector(".shell")?.getBoundingClientRect() || { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+  const menuRect = els.recentContextMenu.getBoundingClientRect();
+  const left = Math.max(8, Math.min(event.clientX - shellRect.left, shellRect.width - menuRect.width - 8));
+  const top = Math.max(8, Math.min(event.clientY - shellRect.top, shellRect.height - menuRect.height - 8));
+  els.recentContextMenu.style.left = `${left}px`;
+  els.recentContextMenu.style.top = `${top}px`;
+  requestAnimationFrame(() => els.btnRemoveRecent?.focus());
+}
+
+async function removeRecentTarget() {
+  const target = recentContextTarget;
+  if (!target) return;
+  closeRecentContextMenu();
+  try {
+    const saved = await api.removeRecent(target);
+    if (Array.isArray(saved)) mergeIndexedData(apps, saved);
+    else recent = recent.filter((item) => item.target !== target);
+    active = 0;
+    render();
+    scheduleFit();
+  } catch (error) {
+    console.warn("remove recent", error);
+  }
+}
+
+function setupLauncherResizeRendering() {
+  window.addEventListener("resize", () => {
+    if (window.innerWidth === launcherViewportWidth) return;
+    launcherViewportWidth = window.innerWidth;
+    if (launcherResizeFrame) cancelAnimationFrame(launcherResizeFrame);
+    launcherResizeFrame = requestAnimationFrame(() => {
+      launcherResizeFrame = 0;
+      if (page === "main" && mode === "browse") render();
+    });
+  });
+}
+
 function visibleItems() {
   if (mode === "command" || cmdMode) return [];
   const rec = mode === "browse" ? visibleRecent() : [];
@@ -660,7 +740,6 @@ const chatRenderer = createChatRenderer({
   currentModeDef,
   openViewer,
   updateConversationJumpBottom,
-  scheduleFit,
   renderMarkdown,
   enhanceCodeBlocks,
   escapeHtml,
@@ -686,8 +765,7 @@ function render() {
       els.listSection?.classList.toggle("hidden", true);
       els.idleHint?.classList.toggle("hidden", true);
       els.aiSection?.classList.toggle("hidden", true);
-      els.fileSection?.classList.toggle("hidden", true);
-      scheduleFit();
+      commandHost.activate(null);
       return;
     }
     if (parsed.kind === "mode") {
@@ -742,21 +820,25 @@ function render() {
   const rec = mode === "browse" ? visibleRecent() : [];
   const def = currentModeDef();
   const showRecent = mode === "browse" && rec.length > 0;
-  const showBuiltin = mode === "browse" && isCommandEnabled("ai");
+  const showBuiltin = mode === "browse" && ["ai", "fy", "file"].some(isCommandEnabled);
   const showList = mode === "search";
-  const showFile = mode === "command" && def?.id === "file";
-  const showAi = mode === "command" && !showFile;
+  const showCustom = mode === "command" && def?.surface === "custom";
+  const showAi = mode === "command" && !showCustom;
+  updateAiOnlyControls(showAi ? def : null);
 
   els.recentSection?.classList.toggle("hidden", !showRecent);
   els.builtinSection?.classList.toggle("hidden", !showBuiltin);
+  els.btnBuiltinAi?.classList.toggle("hidden", !isCommandEnabled("ai"));
+  els.btnBuiltinFy?.classList.toggle("hidden", !isCommandEnabled("fy"));
+  els.btnBuiltinFile?.classList.toggle("hidden", !isCommandEnabled("file"));
   els.listSection?.classList.toggle("hidden", !showList);
   els.idleHint?.classList.toggle("hidden", true);
   els.aiSection?.classList.toggle("hidden", !showAi);
-  els.fileSection?.classList.toggle("hidden", !showFile);
-  if (showFile) renderFileSection();
+  const commandController = commandHost.activate(showCustom ? def : null);
+  if (showCustom) commandController?.render?.();
 
   if (els.q) {
-    if ((showAi || showFile) && def) {
+    if ((showAi || showCustom) && def) {
       els.modePrefix?.classList.remove("hidden");
       if (els.modePrefix) {
         els.modePrefix.textContent = def.displayPrefix || def.label;
@@ -771,7 +853,9 @@ function render() {
     }
   }
 
-  if (els.recentCount) els.recentCount.textContent = String(rec.length);
+  if (els.recentCount) {
+    els.recentCount.textContent = String(recent.filter((app) => !isClutter(app)).length);
+  }
   if (els.recent) {
     els.recent.innerHTML = "";
     if (showRecent) {
@@ -781,7 +865,7 @@ function render() {
         card.dataset.index = String(i);
         card.dataset.target = app.target;
         card.draggable = false;
-        card.title = `${app.name} · 拖拽排序`;
+        card.title = `${app.name} · 拖拽排序 · 右键移除`;
         card.appendChild(iconEl(app));
         const name = document.createElement("div");
         name.className = "name";
@@ -794,6 +878,7 @@ function render() {
         card.addEventListener("click", () => {
           if (!suppressRecentClick) launch(app);
         });
+        card.addEventListener("contextmenu", (event) => openRecentContextMenu(event, app));
         els.recent.appendChild(card);
       });
     }
@@ -844,38 +929,68 @@ function render() {
   if (active >= items.length) active = Math.max(0, items.length - 1);
   paintActive();
   requestAnimationFrame(observeLazyIcons);
-  scheduleFit();
 }
 
 let fitTimer = 0;
+let fitEpoch = 0;
+let windowResizePromise = Promise.resolve();
+const launcherWindowSize = { width: 720, height: 420 };
+
+function launcherContentHeight() {
+  const shellRect = document.querySelector(".shell")?.getBoundingClientRect();
+  if (!shellRect) return launcherWindowSize.height;
+  const sections = [els.recentSection, els.builtinSection].filter(
+    (section) => section && !section.classList.contains("hidden"),
+  );
+  const last = sections.at(-1) || document.querySelector(".search-bar");
+  if (!last) return launcherWindowSize.height;
+  return Math.max(300, Math.ceil(last.getBoundingClientRect().bottom - shellRect.top + 24));
+}
+
+function cancelScheduledFit() {
+  fitEpoch += 1;
+  if (fitTimer) cancelAnimationFrame(fitTimer);
+  fitTimer = 0;
+}
+
+function queueWindowResize(width, height) {
+  windowResizePromise = windowResizePromise
+    .catch(() => {})
+    .then(() => api.resize?.(width, height));
+  return windowResizePromise;
+}
+
 function scheduleFit() {
+  const epoch = ++fitEpoch;
   if (fitTimer) cancelAnimationFrame(fitTimer);
   fitTimer = requestAnimationFrame(() => {
     requestAnimationFrame(() => {
-      fitWindow();
+      fitTimer = 0;
+      if (epoch === fitEpoch) fitWindow(epoch);
     });
   });
 }
 
-async function fitWindow() {
+async function fitWindow(epoch) {
   if (!api.resize) return;
+  if (epoch !== fitEpoch) return;
   if (viewerOpen || conversationModeOpen) return;
-  // cards mode: user freely resizes; don't auto-shrink
-  if (homeUi === "cards" || document.body.classList.contains("ui-cards")) return;
+  if (page === "settings") return;
   const shell = document.querySelector(".shell");
   if (!shell) return;
   // command mode: fixed tall window so thread scrolls and actions stay at bottom
   if (mode === "command" || document.body.classList.contains("ai-open")) {
     try {
-      await api.resize(720, 560);
+      if (epoch === fitEpoch) await queueWindowResize(720, 560);
     } catch (e) {
       console.warn("resize", e);
     }
     return;
   }
-  const h = Math.ceil(shell.scrollHeight || shell.getBoundingClientRect().height);
   try {
-    await api.resize(720, Math.max(150, h));
+    if (epoch === fitEpoch) {
+      await queueWindowResize(launcherWindowSize.width, launcherContentHeight());
+    }
   } catch (e) {
     console.warn("resize", e);
   }
@@ -895,6 +1010,7 @@ async function openViewer(content = "") {
   if (!md.trim()) return;
   viewerMarkdown = md;
   viewerOpen = true;
+  cancelScheduledFit();
   page = "viewer";
   document.documentElement.classList.add("shell-viewer");
   document.body.classList.add("shell-viewer");
@@ -909,15 +1025,16 @@ async function openViewer(content = "") {
   if (els.viewerScroll) els.viewerScroll.scrollTop = 0;
   // in-app only: keep current window chrome (−□×). enlarge if still small.
   if (homeUi === "cards") {
-    try {
-      await api.enterCardsMode();
-    } catch {}
+    viewerWindowPromise = Promise.resolve(api.enterCardsMode?.());
   } else {
-    try {
-      await api.enterViewerMode();
-    } catch (e) {
-      console.warn("enterViewerMode", e);
-    }
+    viewerWindowPromise = windowResizePromise
+      .catch(() => {})
+      .then(() => api.enterViewerMode?.());
+  }
+  try {
+    await viewerWindowPromise;
+  } catch (e) {
+    console.warn("enterViewerMode", e);
   }
   requestAnimationFrame(() => {
     if (els.viewerScroll) {
@@ -936,6 +1053,7 @@ async function closeViewer() {
   page = "main";
   els.pageMain?.classList.remove("hidden");
   els.pageSettings?.classList.add("hidden");
+  await viewerWindowPromise.catch(() => {});
   if (homeUi === "cards") {
     try {
       await api.enterCardsMode();
@@ -948,7 +1066,6 @@ async function closeViewer() {
     }
   }
   setTimeout(() => {
-    if (homeUi !== "cards") scheduleFit();
     document.body.classList.toggle("ai-open", mode === "command");
     render();
     els.q?.focus();
@@ -1003,7 +1120,6 @@ function applyTheme(name) {
   document.querySelectorAll(".theme-card").forEach((el) => {
     el.classList.toggle("active", el.getAttribute("data-theme") === t);
   });
-  scheduleFit();
 }
 
 function ensureProviders() {
@@ -1220,6 +1336,7 @@ function updateProviderDialog() {
 function openProviderManager({ create = false } = {}) {
   ensureProviders();
   if (!providerSessionBackup) providerSessionBackup = snapshotProviderState();
+  setProviderCancelConfirm(false);
   if (els.providerPanel) els.providerPanel.hidden = false;
   const settingsLayout = document.querySelector(".settings-layout");
   if (settingsLayout) {
@@ -1247,6 +1364,7 @@ function closeProviderManager({ discard = true } = {}) {
   }
   providerSessionBackup = null;
   newProviderIds.clear();
+  setProviderCancelConfirm(false);
   if (els.providerPanel) els.providerPanel.hidden = true;
   const settingsLayout = document.querySelector(".settings-layout");
   if (settingsLayout) {
@@ -1254,8 +1372,26 @@ function closeProviderManager({ discard = true } = {}) {
     settingsLayout.removeAttribute("aria-hidden");
   }
   settingsSub = "overview";
-  fillSettingsForm();
-  refreshAiOverview();
+  requestAnimationFrame(() => {
+    fillSettingsForm();
+    refreshAiOverview();
+  });
+}
+
+function setProviderCancelConfirm(open) {
+  const visible = !!open;
+  if (els.providerCancelConfirm) els.providerCancelConfirm.hidden = !visible;
+  if (visible) requestAnimationFrame(() => els.btnProviderConfirmCancel?.focus());
+}
+
+function requestCloseProviderManager() {
+  if (!els.providerPanel || els.providerPanel.hidden) return;
+  if (els.providerCancelConfirm && !els.providerCancelConfirm.hidden) {
+    setProviderCancelConfirm(false);
+    requestAnimationFrame(() => els.btnCancelProvider?.focus());
+    return;
+  }
+  setProviderCancelConfirm(true);
 }
 
 
@@ -1382,8 +1518,8 @@ function applyHomeUi(name, { persist = false, preview = false } = {}) {
       api.enterCardsMode?.().catch(() => {});
     } else {
       api.enterLauncherMode?.().catch(() => {});
-      scheduleFit();
     }
+    scheduleFit();
   }
   if (persist) {
     api.setSettings(settingsPayload({ homeUi: next })).catch((e) => console.warn(e));
@@ -1521,16 +1657,7 @@ async function persistCommandPreferenceChange(change) {
 }
 
 function showSettingsPanel(name) {
-  settingsPanel = name || "general";
-  document.querySelectorAll(".nav-pill").forEach((el) => {
-    el.classList.toggle("active", el.getAttribute("data-panel") === settingsPanel);
-  });
-  document.querySelectorAll(".settings-panel").forEach((el) => {
-    el.classList.toggle("active", el.getAttribute("data-panel") === settingsPanel);
-  });
-  if (settingsPanel === "ai") refreshAiOverview();
-  if (settingsPanel === "commands") renderCommandSettings();
-  if (settingsPanel === "about" || settingsPanel === "general") refreshProxyStatus();
+  settingsView.showPanel(name);
 }
 
 function modelDisplayName(provider, id) {
@@ -1612,31 +1739,102 @@ async function refreshProxyStatus() {
   }
 }
 
-function showPage(name) {
-  if (viewerOpen) closeViewer();
-  const next = name === "settings" ? "settings" : "main";
-  page = next;
-  document.documentElement.classList.toggle("shell-settings", next === "settings");
-  document.body.classList.toggle("shell-settings", next === "settings");
-  els.pageMain?.classList.toggle("hidden", next !== "main");
-  els.pageSettings?.classList.toggle("hidden", next !== "settings");
+function enterSettingsPage() {
+  if (page === "settings") return;
+  cancelScheduledFit();
+  settingsReturnPage = page;
+  settingsReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  page = "settings";
+  document.documentElement.classList.remove("shell-viewer", "conversation-open");
+  document.body.classList.remove("shell-viewer", "conversation-open", "ai-open");
+  document.documentElement.classList.add("shell-settings");
+  document.body.classList.add("shell-settings");
+  els.pageMain?.classList.add("hidden");
+  els.pageConversation?.classList.add("hidden");
   els.pageViewer?.classList.add("hidden");
-  if (next === "settings") {
-    settingsSub = "overview";
-    if (els.providerPanel && !els.providerPanel.hidden) closeProviderManager({ discard: true });
-    fillSettingsForm();
-    markHomeUiCards();
-    showSettingsPanel(settingsPanel || "general");
-    api.enterSettingsMode?.().catch(() => {});
+  els.pageSettings?.classList.remove("hidden");
+  settingsSub = "overview";
+  if (els.providerPanel && !els.providerPanel.hidden) closeProviderManager({ discard: true });
+  fillSettingsForm();
+  markHomeUiCards();
+  showSettingsPanel(settingsPanel || "general");
+  settingsWindowPromise = windowResizePromise
+    .catch(() => {})
+    .then(async () => {
+      if (settingsReturnPage === "conversation") await api.setConversationActive?.(false);
+      return api.enterSettingsMode?.();
+    })
+    .catch((error) => {
+      console.warn("enter settings", error);
+    });
+}
+
+async function leaveSettingsPage() {
+  if (page !== "settings") return;
+  const target = settingsReturnPage || "main";
+  page = target;
+  document.documentElement.classList.remove("shell-settings");
+  document.body.classList.remove("shell-settings");
+  els.pageSettings?.classList.add("hidden");
+  els.pageMain?.classList.toggle("hidden", target !== "main");
+  els.pageConversation?.classList.toggle("hidden", target !== "conversation");
+  els.pageViewer?.classList.toggle("hidden", target !== "viewer");
+
+  if (target === "viewer" && viewerOpen) {
+    document.documentElement.classList.add("shell-viewer");
+    document.body.classList.add("shell-viewer");
+  } else if (target === "conversation" && conversationModeOpen) {
+    document.documentElement.classList.add("conversation-open");
+    document.body.classList.add("conversation-open");
+    renderThread({ streaming: aiBusy });
   } else {
-    // restore home window mode
-    if (homeUi === "cards") api.enterCardsMode?.().catch(() => {});
-    else {
-      api.enterLauncherMode?.().catch(() => {});
-      scheduleFit();
-    }
-    els.q?.focus();
+    page = "main";
+    els.pageMain?.classList.remove("hidden");
+    els.pageConversation?.classList.add("hidden");
+    els.pageViewer?.classList.add("hidden");
+    document.body.classList.toggle("ai-open", mode === "command");
+    render();
   }
+
+  try {
+    await settingsWindowPromise;
+    const restoreMode = target === "viewer" || homeUi === "cards" ? "windowed" : "launcher";
+    await api.leaveSettingsMode?.(restoreMode);
+    if (target === "conversation") await api.setConversationActive?.(true);
+  } catch (error) {
+    console.warn("leave settings", error);
+  }
+
+  requestAnimationFrame(() => {
+    if (target === "conversation") els.conversationInput?.focus();
+    else if (target === "viewer") els.btnViewerBack?.focus();
+    else if (settingsReturnFocus?.isConnected) settingsReturnFocus.focus();
+    else els.q?.focus();
+  });
+}
+
+function backFromSettings() {
+  if (settingsSub === "providers" && els.providerPanel && !els.providerPanel.hidden) {
+    requestCloseProviderManager();
+    return;
+  }
+  leaveSettingsPage();
+}
+
+function showPage(name) {
+  if (name === "settings") {
+    enterSettingsPage();
+    return;
+  }
+  if (page === "settings") {
+    leaveSettingsPage();
+    return;
+  }
+  page = "main";
+  els.pageMain?.classList.remove("hidden");
+  els.pageSettings?.classList.add("hidden");
+  els.pageViewer?.classList.add("hidden");
+  els.q?.focus();
 }
 
 function settingsPayload(extra = {}) {
@@ -1727,6 +1925,10 @@ function renderAppScanPaths() {
   for (const path of paths) {
     const item = document.createElement("div");
     item.className = "scan-folder-item";
+    const icon = document.createElement("span");
+    icon.className = "scan-folder-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.innerHTML = '<svg viewBox="0 0 24 24"><path d="M3 6.5A2.5 2.5 0 0 1 5.5 4H10l2 2.5h6.5A2.5 2.5 0 0 1 21 9v8.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5Z"/></svg>';
     const label = document.createElement("span");
     label.className = "scan-folder-path";
     label.textContent = path;
@@ -1734,11 +1936,11 @@ function renderAppScanPaths() {
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "scan-folder-remove";
-    remove.textContent = "×";
+    remove.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>';
     remove.title = `移除 ${path}`;
     remove.setAttribute("aria-label", `移除 ${path}`);
     remove.addEventListener("click", () => removeAppScanPath(path));
-    item.append(label, remove);
+    item.append(icon, label, remove);
     els.appScanPathList.appendChild(item);
   }
 }
@@ -1955,13 +2157,15 @@ async function saveProviderManual() {
     els.pvAddModel?.focus();
     return;
   }
-  const saved = await persistProviders(newProviderIds.has(p.id) ? "已添加供应商" : "已保存配置");
+  const successMessage = newProviderIds.has(p.id) ? "供应商添加成功" : "供应商保存成功";
+  const saved = await persistProviders(successMessage);
   if (!saved) return;
   providerSessionBackup = null;
   newProviderIds.clear();
   updateUseProviderBtn();
   refreshAiOverview();
   closeProviderManager({ discard: false });
+  showSettingsToast(successMessage);
 }
 
 function applySettingsSnap(s) {
@@ -2068,10 +2272,19 @@ function setConversationPanel(open) {
 }
 
 function setAiMoreMenu(open) {
-  const visible = !!open;
+  const visible = !!open && currentModeDef()?.id === "ai";
   els.aiMoreMenu?.classList.toggle("is-open", visible);
   els.aiMoreMenu?.setAttribute("aria-hidden", String(!visible));
   els.btnAiMore?.setAttribute("aria-expanded", String(visible));
+}
+
+function updateAiOnlyControls(command) {
+  const visible = command?.id === "ai";
+  els.aiMoreWrap?.classList.toggle("hidden", !visible);
+  if (!visible) {
+    setAiMoreMenu(false);
+    setConversationPanel(false);
+  }
 }
 
 function renderConversationList(container) {
@@ -2446,42 +2659,7 @@ async function toggleWebSearch() {
 }
 
 function enhanceSettingsDescriptions() {
-  document.querySelectorAll(".settings-panel .s-row-desc").forEach((description) => {
-    const text = description.textContent.replace(/\s+/g, " ").trim();
-    const textBlock = description.parentElement;
-    const title = textBlock?.querySelector(".s-row-title");
-    if (!title) return;
-    const row = textBlock.parentElement;
-    if (!row) return;
-    const info = document.createElement("span");
-    info.className = "settings-info-tip";
-    info.tabIndex = 0;
-    info.setAttribute("role", "img");
-    info.setAttribute("aria-label", text);
-    info.dataset.tooltip = text;
-    if (description.id === "ai-current-label") {
-      info.dataset.tooltipSource = description.id;
-    }
-    info.textContent = "i";
-    const copy = document.createElement("div");
-    copy.className = "settings-row-copy";
-    row.insertBefore(copy, textBlock);
-    copy.append(info, textBlock);
-    const nestedStatus = description.querySelector("#proxy-status-label");
-    if (nestedStatus) {
-      nestedStatus.classList.add("s-row-inline-value");
-      title.insertAdjacentElement("afterend", nestedStatus);
-      description.remove();
-      return;
-    }
-    const dynamic = ["about-data-dir"].includes(description.id);
-    if (dynamic) {
-      description.classList.add("s-row-inline-value");
-      title.insertAdjacentElement("afterend", description);
-      return;
-    }
-    description.remove();
-  });
+  settingsView.enhanceDescriptions();
 }
 
 async function toggleConversationPin() {
@@ -2502,6 +2680,7 @@ function enterConversationMode() {
     mode = "command";
   }
   conversationModeOpen = true;
+  cancelScheduledFit();
   page = "conversation";
   setAiMoreMenu(false);
   setConversationPanel(false);
@@ -2519,9 +2698,9 @@ function enterConversationMode() {
   renderPendingAttachments();
   updateConversationPinButton();
   updateConversationWebButton();
+  api.setConversationActive?.(true).catch(() => {});
   renderThread({ streaming: aiBusy });
   updateConversationComposer();
-  api.resize?.(820, 700).catch(() => {});
   requestAnimationFrame(() => els.conversationInput?.focus());
   return true;
 }
@@ -2529,6 +2708,7 @@ function enterConversationMode() {
 function exitConversationMode() {
   if (!conversationModeOpen) return;
   conversationModeOpen = false;
+  api.setConversationActive?.(false).catch(() => {});
   page = "main";
   setConversationModelMenu(false);
   setConversationDrawer(false);
@@ -2545,9 +2725,9 @@ function exitConversationMode() {
   requestAnimationFrame(() => els.q?.focus());
 }
 
-function enterFileModeFromConversation(body = "") {
+function enterStandaloneModeFromConversation(command, body = "") {
   if (conversationModeOpen) exitConversationMode();
-  if (!enterCommandMode("file", { clearBody: true, keepHistory: false })) return;
+  if (!enterCommandMode(command.id, { clearBody: true, keepHistory: false })) return;
   if (els.q) {
     els.q.value = body;
     els.q.focus();
@@ -2594,8 +2774,8 @@ async function sendAi() {
   const def = currentModeDef();
   if (!def) return;
   let prompt = getCommandBody();
-  if (conversationModeOpen && def.id === "file") {
-    enterFileModeFromConversation(prompt);
+  if (conversationModeOpen && def.surface === "custom") {
+    enterStandaloneModeFromConversation(def, prompt);
     return;
   }
   if (mode !== "command" && !cmdMode) return;
@@ -2610,24 +2790,22 @@ async function sendAi() {
   }
 
   if (typeof def?.run === "function") {
+    const controller = commandHost.getController(def.id);
     try {
-      await def.run(String(prompt).trim(), api, {
-        mode: fileMode.openMode,
-        allowFileAccess: fileMode.allowFileAccess,
-      });
+      await def.run(String(prompt).trim(), api, controller?.getRunOptions?.() || {});
       if (els.q) els.q.value = "";
       if (conversationModeOpen && els.conversationInput) {
         els.conversationInput.value = "";
         updateConversationComposer();
       }
-      if (def.id === "file") {
-          if (els.fileStatus) els.fileStatus.textContent = fileMode.openMode === "browser" ? "已在浏览器打开" : "已打开";
+      if (controller?.onRunSuccess) {
+        controller.onRunSuccess();
       } else if (els.aiStatus) {
         els.aiStatus.textContent = "已完成";
       }
     } catch (error) {
-      if (def.id === "file") {
-        if (els.fileStatus) els.fileStatus.textContent = error?.message || String(error);
+      if (controller?.onRunError) {
+        controller.onRunError(error);
       } else {
         renderThread({ errorText: error?.message || String(error) });
       }
@@ -2702,7 +2880,7 @@ async function sendAi() {
     chatOpts.model = settingsSnap.translateModel;
   }
   try {
-    await api.aiChat(messages, chatOpts);
+    await chatRuntime.send(messages, chatOpts);
   } catch (e) {
     aiBusy = false;
     if (els.aiStatus) els.aiStatus.textContent = "失败";
@@ -2717,7 +2895,7 @@ async function stopAi() {
   updateAiStopControls();
   updateConversationComposer();
   try {
-    const stopped = await api.stopAi?.();
+    const stopped = await chatRuntime.stop();
     if (!stopped) {
       aiStopping = false;
       updateAiStopControls();
@@ -2735,6 +2913,15 @@ async function stopAi() {
 function onKey(e) {
   if (e.key === "Escape") {
     e.preventDefault();
+    if (els.recentContextMenu && !els.recentContextMenu.classList.contains("hidden")) {
+      closeRecentContextMenu();
+      els.q?.focus();
+      return;
+    }
+    if (page === "settings") {
+      backFromSettings();
+      return;
+    }
     if (els.aiMoreMenu?.classList.contains("is-open")) {
       setAiMoreMenu(false);
       els.btnAiMore?.focus();
@@ -2750,15 +2937,6 @@ function onKey(e) {
     }
     if (viewerOpen) {
       closeViewer();
-      return;
-    }
-    if (page === "settings") {
-      // provider sub → AI overview → main
-      if (settingsSub === "providers" && els.providerPanel && !els.providerPanel.hidden) {
-        closeProviderManager({ discard: true });
-        return;
-      }
-      showPage("main");
       return;
     }
     if (mode === "command" || cmdMode) {
@@ -2889,8 +3067,8 @@ async function boot() {
         api.enterCardsMode?.().catch(() => {});
       } else {
         api.enterLauncherMode?.().catch(() => {});
-        scheduleFit();
       }
+      scheduleFit();
       if (window.CustomDropdown) window.CustomDropdown.mountAll();
       els.q?.focus();
     });
@@ -2901,7 +3079,7 @@ async function boot() {
 
 function setupDrag() {
   document
-    .querySelectorAll(".drag-bar, .cards-chrome-left, .settings-header, .provider-dialog-header, .conversation-topbar")
+    .querySelectorAll(".drag-bar, .cards-chrome-left, .settings-sidebar-header, .settings-main-drag-region, .provider-dialog-header, .conversation-topbar")
     .forEach((region) => {
       region.addEventListener("mousedown", async (event) => {
         if (event.button !== 0) return;
@@ -2921,7 +3099,7 @@ els.q.addEventListener("input", () => {
 });
 
 els.btnSettings?.addEventListener("click", () => showPage("settings"));
-els.btnBack?.addEventListener("click", () => showPage("main"));
+els.btnBack?.addEventListener("click", backFromSettings);
 els.btnAiStop?.addEventListener("click", stopAi);
 els.btnViewerBack?.addEventListener("click", () => closeViewer());
 els.btnViewerCopy?.addEventListener("click", () => copyViewerAll());
@@ -2935,11 +3113,6 @@ els.aiMenuNew?.addEventListener("click", () => {
 els.aiMenuFollowup?.addEventListener("click", () => {
   setAiMoreMenu(false);
   startFollowup();
-});
-els.fileModeAuto?.addEventListener("click", () => setFileOpenMode("auto"));
-els.fileModeBrowser?.addEventListener("click", () => setFileOpenMode("browser"));
-els.fileAllowFileAccess?.addEventListener("change", () => {
-  setFileAllowFileAccess(els.fileAllowFileAccess.checked);
 });
 els.aiMenuHistory?.addEventListener("click", () => {
   setAiMoreMenu(false);
@@ -2973,8 +3146,8 @@ els.conversationFileInput?.addEventListener("change", () => addConversationAttac
 els.conversationInput?.addEventListener("input", () => {
   const parsed = parseSlashInput(els.conversationInput.value);
   if (parsed?.kind === "mode") {
-    if (parsed.def.id === "file") {
-      enterFileModeFromConversation(parsed.body);
+    if (parsed.def.surface === "custom") {
+      enterStandaloneModeFromConversation(parsed.def, parsed.body);
       return;
     }
     cmdMode = parsed.def.id;
@@ -3011,6 +3184,16 @@ document.addEventListener("mousedown", (event) => {
 });
 els.btnBuiltinAi?.addEventListener("click", () => {
   enterCommandMode("ai", { clearBody: true, keepHistory: false });
+});
+els.btnBuiltinFy?.addEventListener("click", () => {
+  enterCommandMode("fy", { clearBody: true, keepHistory: false });
+});
+els.btnBuiltinFile?.addEventListener("click", () => {
+  enterCommandMode("file", { clearBody: true, keepHistory: false });
+});
+els.btnRemoveRecent?.addEventListener("click", removeRecentTarget);
+document.addEventListener("pointerdown", (event) => {
+  if (!els.recentContextMenu?.contains(event.target)) closeRecentContextMenu();
 });
 els.themeGrid?.addEventListener("click", (e) => {
   const btn = e.target.closest(".theme-card");
@@ -3073,11 +3256,6 @@ els.appScanPathInput?.addEventListener("keydown", (event) => {
   addAppScanPath();
 });
 els.appScanDepth?.addEventListener("change", saveAppScanDepth);
-els.settingsNav?.addEventListener("click", (e) => {
-  const btn = e.target.closest("[data-panel]");
-  if (!btn) return;
-  showSettingsPanel(btn.getAttribute("data-panel"));
-});
 els.btnManageProviders?.addEventListener("click", () => openProviderManager());
 els.btnSetActiveProvider?.addEventListener("click", () => {
   commitEditorToSnap();
@@ -3131,8 +3309,13 @@ els.btnDelProvider?.addEventListener("click", () => deleteProvider());
 els.btnPickModel?.addEventListener("click", () => fetchAndPickModels());
 els.btnSaveAi?.addEventListener("click", () => saveProviderManual());
 els.btnAddModel?.addEventListener("click", () => addModelManual());
-els.btnCloseProvider?.addEventListener("click", () => closeProviderManager({ discard: true }));
-els.btnCancelProvider?.addEventListener("click", () => closeProviderManager({ discard: true }));
+els.btnCloseProvider?.addEventListener("click", requestCloseProviderManager);
+els.btnCancelProvider?.addEventListener("click", requestCloseProviderManager);
+els.btnProviderContinue?.addEventListener("click", () => setProviderCancelConfirm(false));
+els.btnProviderConfirmCancel?.addEventListener("click", () => closeProviderManager({ discard: true }));
+els.providerCancelConfirm?.addEventListener("mousedown", (event) => {
+  if (event.target === els.providerCancelConfirm) setProviderCancelConfirm(false);
+});
 els.pvAddModel?.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     e.preventDefault();
@@ -3168,9 +3351,55 @@ function eventToHotkey(e) {
   return parts.join("+");
 }
 
+function showSettingsToast(message, kind = "success") {
+  if (!els.settingsToast) return;
+  if (settingsToastTimer) window.clearTimeout(settingsToastTimer);
+  els.settingsToast.textContent = message;
+  els.settingsToast.dataset.kind = kind;
+  els.settingsToast.hidden = false;
+  requestAnimationFrame(() => els.settingsToast?.classList.add("is-visible"));
+  settingsToastTimer = window.setTimeout(() => {
+    els.settingsToast?.classList.remove("is-visible");
+    window.setTimeout(() => {
+      if (els.settingsToast && !els.settingsToast.classList.contains("is-visible")) {
+        els.settingsToast.hidden = true;
+      }
+    }, 180);
+  }, 1800);
+}
+
+function setHotkeySaveState(state) {
+  if (!els.btnSaveHotkey) return;
+  if (hotkeyFeedbackTimer) window.clearTimeout(hotkeyFeedbackTimer);
+  els.btnSaveHotkey.classList.remove("is-saving", "is-saved", "is-error");
+  els.btnSaveHotkey.disabled = state === "saving";
+  if (state === "saving") {
+    els.btnSaveHotkey.classList.add("is-saving");
+    els.btnSaveHotkey.textContent = "保存中…";
+    return;
+  }
+  if (state === "saved") {
+    els.btnSaveHotkey.classList.add("is-saved");
+    els.btnSaveHotkey.textContent = "已保存";
+  } else if (state === "error") {
+    els.btnSaveHotkey.classList.add("is-error");
+    els.btnSaveHotkey.textContent = "保存失败";
+  } else {
+    els.btnSaveHotkey.textContent = "保存";
+    return;
+  }
+  hotkeyFeedbackTimer = window.setTimeout(() => setHotkeySaveState("idle"), 1400);
+}
+
 async function saveHotkey(val) {
   const v = (val || "").trim();
-  if (!v) return;
+  if (!v) {
+    setHotkeySaveState("error");
+    showSettingsToast("请输入有效的组合键", "error");
+    els.hotkeyInput?.focus();
+    return;
+  }
+  setHotkeySaveState("saving");
   try {
     const res = await api.setHotkey(v);
     const hk = res?.hotkey || v;
@@ -3180,8 +3409,12 @@ async function saveHotkey(val) {
       els.hotkeyInput.classList.remove("capturing");
     }
     hotkeyCapturing = false;
+    setHotkeySaveState("saved");
+    showSettingsToast(`全局热键已保存：${hk}`);
   } catch (e) {
-    alert(`热键设置失败: ${e?.message || e}`);
+    setHotkeySaveState("error");
+    showSettingsToast(`热键设置失败：${e?.message || e}`, "error");
+    els.hotkeyInput?.focus();
   }
 }
 
@@ -3226,8 +3459,13 @@ api.onShow?.(() => {
   active = 0;
   setAiMoreMenu(false);
   setConversationPanel(false);
+  if (page === "settings") {
+    els.pageSettings?.classList.remove("hidden");
+    return;
+  }
   if (conversationModeOpen) {
     els.pageConversation?.classList.remove("hidden");
+    api.setConversationActive?.(true).catch(() => {});
     renderThread({ streaming: aiBusy });
     requestAnimationFrame(() => els.conversationInput?.focus());
     return;
@@ -3240,6 +3478,7 @@ api.onShow?.(() => {
   showPage("main");
   requestAnimationFrame(() => {
     render();
+    scheduleFit();
     els.q?.focus();
   });
 });
@@ -3261,11 +3500,11 @@ api.onAppsUpdated?.(async () => {
   }
 });
 
-api.onAiTool?.((payload) => {
+chatRuntime.on("tool", (payload) => {
   upsertToolRow(typeof payload === "object" ? payload : {});
 });
 
-api.onAiChunk?.((payload) => {
+chatRuntime.on("chunk", (payload) => {
   const text =
     typeof payload === "string"
       ? payload
@@ -3280,7 +3519,7 @@ api.onAiChunk?.((payload) => {
   }
 });
 
-api.onAiDone?.(() => {
+chatRuntime.on("done", () => {
   if (aiErrorFlag) {
     aiErrorFlag = false;
     return;
@@ -3303,7 +3542,7 @@ api.onAiDone?.(() => {
 });
 
 let aiErrorFlag = false;
-api.onAiError?.((payload) => {
+chatRuntime.on("error", (payload) => {
   aiBusy = false;
   aiStopping = false;
   if (streamRenderFrame) {
@@ -3324,5 +3563,6 @@ api.onAiError?.((payload) => {
 
 setupDrag();
 setupRecentDrag();
+setupLauncherResizeRendering();
 enhanceSettingsDescriptions();
 boot();

@@ -25,7 +25,6 @@ pub fn load(path: &Path) -> Vec<RecentItem> {
     for item in &mut items {
         item.icon.clear();
     }
-    items.truncate(10);
     items
 }
 
@@ -34,7 +33,6 @@ pub fn save(path: &Path, items: &[RecentItem]) -> Result<(), String> {
     for item in &mut stored {
         item.icon.clear();
     }
-    stored.truncate(10);
     let data = serde_json::to_vec(&stored).map_err(|e| e.to_string())?;
     fs::write(path, data).map_err(|e| e.to_string())
 }
@@ -55,7 +53,6 @@ pub fn push(path: &Path, items: &mut Vec<RecentItem>, app: &AppItem) {
             clutter,
         },
     );
-    items.truncate(10);
     let _ = save(path, items);
 }
 
@@ -67,8 +64,12 @@ pub fn reorder(path: &Path, items: &mut Vec<RecentItem>, targets: &[String]) -> 
         }
     }
     reordered.append(items);
-    reordered.truncate(10);
     *items = reordered;
+    save(path, items)
+}
+
+pub fn remove(path: &Path, items: &mut Vec<RecentItem>, target: &str) -> Result<(), String> {
+    items.retain(|item| item.target != target);
     save(path, items)
 }
 

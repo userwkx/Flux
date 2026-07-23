@@ -6,7 +6,6 @@ export function createChatRenderer({
   currentModeDef,
   openViewer,
   updateConversationJumpBottom,
-  scheduleFit,
   renderMarkdown,
   enhanceCodeBlocks,
   escapeHtml,
@@ -113,7 +112,6 @@ export function createChatRenderer({
       els.aiMenuFollowup?.classList.add("hidden");
       els.aiThread.scrollTop = shouldStickToBottom ? els.aiThread.scrollHeight : previousScrollTop;
       updateConversationJumpBottom();
-      scheduleFit();
       return;
     }
 
@@ -191,7 +189,6 @@ export function createChatRenderer({
     els.aiMenuFollowup?.classList.toggle("hidden", !canFollow);
     els.aiThread.scrollTop = shouldStickToBottom ? els.aiThread.scrollHeight : previousScrollTop;
     updateConversationJumpBottom();
-    scheduleFit();
   }
 
   function scheduleStreamingRender() {

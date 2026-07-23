@@ -16,11 +16,17 @@
     const t = getTauri();
     if (!t || !t.event) return () => {};
     let unlisten = null;
+    let disposed = false;
     t.event.listen(event, (e) => cb(e.payload)).then((fn) => {
-      unlisten = fn;
+      if (disposed) fn();
+      else unlisten = fn;
+    }).catch((error) => {
+      if (!disposed) console.warn(`listen ${event}`, error);
     });
     return () => {
+      disposed = true;
       if (unlisten) unlisten();
+      unlisten = null;
     };
   }
 
@@ -34,12 +40,14 @@
     getApps: () => invoke("get_apps"),
     getAppIcons: (targets) => invoke("get_app_icons", { targets }),
     reorderRecent: (targets) => invoke("reorder_recent", { targets }),
+    removeRecent: (target) => invoke("remove_recent", { target }),
     getConversations: () => invoke("get_conversations"),
     saveConversation: (conversation) =>
       invoke("save_conversation", { conversation }),
     deleteConversation: (id) => invoke("delete_conversation", { id }),
     saveAttachment: (upload) => invoke("save_attachment", { upload }),
     setConversationPin: (pinned) => invoke("set_conversation_pin", { pinned }),
+    setConversationActive: (active) => invoke("set_conversation_active", { active }),
     setSettings: (patch) => invoke("set_settings", { patch }),
     launch: (app) => invoke("launch_app", { item: app }),
     hide: () => invoke("hide_window"),
@@ -50,6 +58,7 @@
     enterCardsMode: () => invoke("enter_cards_mode"),
     enterLauncherMode: () => invoke("enter_launcher_mode"),
     enterSettingsMode: () => invoke("enter_settings_mode"),
+    leaveSettingsMode: (mode) => invoke("leave_settings_mode", { mode }),
     toggleMaximizeWindow: () => invoke("toggle_maximize_window"),
     openDataDir: () => invoke("open_data_dir"),
     pickAppScanFolder: () => invoke("pick_app_scan_folder"),

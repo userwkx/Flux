@@ -1,0 +1,7 @@
+.command-view-host {
+  display: contents;
+}
+
+.command-view.hidden {
+  display: none !important;
+}

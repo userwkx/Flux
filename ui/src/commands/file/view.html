@@ -1,0 +1,29 @@
+<section class="section file-section hidden" aria-label="本地文件打开">
+  <div class="file-section-head">
+    <h2>本地打开</h2>
+    <span data-file-status class="file-status" role="status"></span>
+  </div>
+  <div class="file-native-options" role="group" aria-label="打开方式">
+    <button type="button" class="file-mode-row" data-file-mode="auto" aria-pressed="true">
+      <span class="file-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h6l2 2h8v10H4z"/><path d="M4 6v-2h6l2 2"/></svg></span>
+      <span class="file-row-label">自动</span>
+      <span class="settings-info-tip" tabindex="0" role="img" aria-label="自动模式说明" data-tooltip="交给 Windows 的默认关联应用打开文件。">i</span>
+      <span class="file-mode-selected" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg></span>
+    </button>
+    <button type="button" class="file-mode-row" data-file-mode="browser" aria-pressed="false">
+      <span class="file-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c2.5 2.2 3.7 4.9 3.7 8S14.5 17.8 12 20M12 4C9.5 6.2 8.3 8.9 8.3 12s1.2 5.8 3.7 8"/></svg></span>
+      <span class="file-row-label">浏览器</span>
+      <span class="settings-info-tip" tabindex="0" role="img" aria-label="浏览器模式说明" data-tooltip="始终用 Chrome 或 Edge 打开本地文件。">i</span>
+      <span class="file-mode-selected" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg></span>
+    </button>
+    <div class="file-access-option" data-file-access-option>
+      <span class="file-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 21s7-3.5 7-9V5l-7-3-7 3v7c0 5.5 7 9 7 9Z"/><path d="m9.5 12 1.7 1.7 3.6-3.6"/></svg></span>
+      <span class="file-row-label">允许本地资源</span>
+      <span class="settings-info-tip" tabindex="0" role="img" aria-label="本地资源权限说明" data-tooltip="浏览器会以 --allow-file-access-from-files 启动独立配置。该模式会降低本地文件安全限制，仅在确认文件可信时开启。">i</span>
+      <label class="file-toggle" title="允许本地 HTML 访问本地资源">
+        <input type="checkbox" data-file-allow-access />
+        <span aria-hidden="true"></span>
+      </label>
+    </div>
+  </div>
+</section>

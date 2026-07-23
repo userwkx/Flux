@@ -1,6 +1,9 @@
-import { commandRegistry } from "./registry.js";
+import { commandRegistry } from "../registry.js";
+import { loadStyle } from "../../shared/template.js";
 
-commandRegistry.register({
+await loadStyle(new URL("./styles.css", import.meta.url));
+
+export const aiCommand = commandRegistry.register({
   id: "ai",
   aliases: ["chat", "ask"],
   label: "/ai",

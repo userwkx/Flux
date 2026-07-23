@@ -1,0 +1,47 @@
+<section id="ai-section" class="section ai-section hidden">
+  <div class="section-title ai-section-head">
+    <span id="ai-section-title">AI 对话</span>
+    <div class="ai-head-actions">
+      <button type="button" class="ai-stop-button hidden" id="btn-ai-stop" title="停止生成" aria-label="停止生成"><span aria-hidden="true"></span></button>
+      <span class="muted" id="ai-status">Enter 发送</span>
+      <div class="ai-more-wrap">
+        <button type="button" class="ai-more-trigger" id="btn-ai-more" title="更多" aria-label="更多对话选项" aria-haspopup="menu" aria-expanded="false"><span></span><span></span><span></span></button>
+        <div class="ai-more-menu" id="ai-more-menu" role="menu" aria-hidden="true">
+          <button type="button" class="ai-more-item" id="ai-menu-new" role="menuitem">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            <span class="ai-more-copy">新对话</span>
+            <span class="ai-menu-info" role="img" aria-label="清空当前内容" data-tooltip="清空当前内容">i</span>
+          </button>
+          <button type="button" class="ai-more-item hidden" id="ai-menu-followup" role="menuitem">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 8h10M7 12h7M9 18l-4 3v-5a7 7 0 1 1 4 2Z"/></svg>
+            <span class="ai-more-copy">追问</span>
+            <span class="ai-menu-info" role="img" aria-label="继续当前对话" data-tooltip="继续当前对话">i</span>
+          </button>
+          <button type="button" class="ai-more-item" id="ai-menu-history" role="menuitem" aria-expanded="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>
+            <span class="ai-more-copy">历史</span>
+            <span class="ai-menu-info" role="img" aria-label="查看最近 10 次会话" data-tooltip="查看最近 10 次会话">i</span>
+          </button>
+          <button type="button" class="ai-more-item" id="ai-menu-mode" role="menuitem">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 8h10M7 12h7M9 18l-4 3v-5a7 7 0 1 1 4 2Z"/></svg>
+            <span class="ai-more-copy">对话模式</span>
+            <span class="ai-mode-meta">
+              <span class="ai-mode-badge">快速</span>
+              <span class="ai-menu-info" id="ai-mode-current" role="img" aria-label="切换到完整对话页面" data-tooltip="切换到完整对话页面">i</span>
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="conversation-panel hidden" id="conversation-panel" role="dialog" aria-modal="true" aria-label="最近会话">
+    <div class="conversation-dialog">
+      <div class="conversation-panel-head">
+        <div><span>最近会话</span><small>最多保留 10 条</small></div>
+        <button type="button" class="ai-head-icon" id="btn-close-conversations" title="关闭" aria-label="关闭">×</button>
+      </div>
+      <div class="conversation-list" id="conversation-list"></div>
+    </div>
+  </div>
+  <div class="ai-thread" id="ai-thread"></div>
+</section>

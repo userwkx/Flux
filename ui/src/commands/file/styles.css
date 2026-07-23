@@ -1,0 +1,165 @@
+.file-section {
+  width: min(620px, 100%);
+  margin: 0 auto;
+  padding: 16px 4px 12px;
+}
+.file-section-head {
+  min-height: 38px;
+  margin: 0;
+  padding: 0 8px 10px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.file-section-head h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.file-status {
+  max-width: 54%;
+  color: var(--accent-strong);
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: right;
+}
+.file-native-options {
+  display: grid;
+}
+.file-mode-row,
+.file-access-option {
+  width: 100%;
+  min-height: 50px;
+  margin: 0;
+  padding: 9px 8px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+}
+.file-mode-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+.file-mode-row:hover {
+  background: color-mix(in srgb, var(--accent-soft) 42%, transparent);
+}
+.file-mode-row[aria-pressed="true"] {
+  color: var(--accent-strong);
+  box-shadow: inset 2px 0 0 var(--accent-strong);
+}
+.file-row-icon {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+.file-mode-row[aria-pressed="true"] .file-row-icon {
+  color: var(--accent-strong);
+}
+.file-row-icon svg,
+.file-mode-selected svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.file-row-label {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+.file-mode-row .settings-info-tip,
+.file-access-option .settings-info-tip {
+  margin: 0;
+}
+.file-mode-selected {
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  color: var(--accent-strong);
+  opacity: 0;
+}
+.file-mode-row[aria-pressed="true"] .file-mode-selected {
+  opacity: 1;
+}
+.file-access-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.file-access-option.is-disabled {
+  color: var(--muted);
+}
+.file-access-option.is-disabled .file-row-icon {
+  color: inherit;
+}
+.file-toggle {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  margin-left: auto;
+  flex: 0 0 40px;
+  cursor: pointer;
+}
+.file-toggle input {
+  position: absolute;
+  opacity: 0;
+}
+.file-toggle span {
+  position: absolute;
+  inset: 0;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--muted) 30%, transparent);
+  transition: background 140ms ease;
+}
+.file-toggle span::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
+  content: "";
+  transition: transform 140ms ease;
+}
+.file-toggle input:checked + span {
+  background: var(--accent-strong);
+}
+.file-toggle input:checked + span::after {
+  transform: translateX(18px);
+}
+.file-toggle input:focus-visible + span {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+.file-toggle input:disabled + span {
+  opacity: 0.48;
+}
+.file-toggle:has(input:disabled) {
+  cursor: default;
+}
+
+@media (max-width: 480px) {
+  .file-section-head,
+  .file-mode-row,
+  .file-access-option {
+    padding-right: 4px;
+    padding-left: 4px;
+  }
+}

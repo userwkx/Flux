@@ -30,6 +30,11 @@ static IGNORE_BLUR: AtomicBool = AtomicBool::new(false);
 /// Manual work-area "maximize" (frameless may not report is_maximized).
 static WIN_FILLED: AtomicBool = AtomicBool::new(false);
 static WIN_RESTORE: Mutex<Option<(i32, i32, u32, u32)>> = Mutex::new(None);
+static SETTINGS_RESTORE: Mutex<Option<(i32, i32, u32, u32)>> = Mutex::new(None);
+static VIEWER_RESTORE: Mutex<Option<(i32, i32, u32, u32)>> = Mutex::new(None);
+static SHOW_TOPMOST_SEQ: AtomicU64 = AtomicU64::new(0);
+static CONVERSATION_ACTIVE: AtomicBool = AtomicBool::new(false);
+static CONVERSATION_TOPMOST: AtomicBool = AtomicBool::new(false);
 
 fn bump_ignore_blur() {
     IGNORE_BLUR.store(true, Ordering::SeqCst);
@@ -200,9 +205,11 @@ fn toggle_main(app: &AppHandle) {
             let _ = w.hide();
         } else {
             bump_ignore_blur();
+            let _ = w.set_always_on_top(true);
             let _ = w.show();
             let _ = w.set_focus();
             let _ = w.emit("window-shown", ());
+            release_temporary_topmost(app.clone());
         }
     }
 }
@@ -210,10 +217,27 @@ fn toggle_main(app: &AppHandle) {
 fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         bump_ignore_blur();
+        let _ = w.set_always_on_top(true);
         let _ = w.show();
         let _ = w.set_focus();
         let _ = w.emit("window-shown", ());
+        release_temporary_topmost(app.clone());
     }
+}
+
+fn release_temporary_topmost(app: AppHandle) {
+    let sequence = SHOW_TOPMOST_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(700));
+        if SHOW_TOPMOST_SEQ.load(Ordering::SeqCst) != sequence
+            || CONVERSATION_TOPMOST.load(Ordering::SeqCst)
+        {
+            return;
+        }
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.set_always_on_top(false);
+        }
+    });
 }
 
 fn hide_main(app: &AppHandle) {
@@ -299,6 +323,13 @@ fn reorder_recent(
 ) -> Result<Vec<RecentItem>, String> {
     let mut items = state.recent.lock();
     recent::reorder(&state.recent_path(), &mut items, &targets)?;
+    Ok(items.clone())
+}
+
+#[tauri::command]
+fn remove_recent(state: State<Arc<AppState>>, target: String) -> Result<Vec<RecentItem>, String> {
+    let mut items = state.recent.lock();
+    recent::remove(&state.recent_path(), &mut items, target.trim())?;
     Ok(items.clone())
 }
 
@@ -570,15 +601,36 @@ fn set_conversation_pin(
     state: State<Arc<AppState>>,
     pinned: bool,
 ) -> Result<bool, String> {
+    let topmost = pinned && CONVERSATION_ACTIVE.load(Ordering::SeqCst);
+    CONVERSATION_TOPMOST.store(topmost, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window("main") {
         window
-            .set_always_on_top(pinned)
+            .set_always_on_top(topmost)
             .map_err(|error| error.to_string())?;
     }
     let mut settings = state.settings.lock();
     settings.conversation_pinned = pinned;
     settings::save(&state.settings_path(), &settings)?;
     Ok(pinned)
+}
+
+#[tauri::command]
+fn set_conversation_active(
+    app: AppHandle,
+    state: State<Arc<AppState>>,
+    active: bool,
+) -> Result<bool, String> {
+    CONVERSATION_ACTIVE.store(active, Ordering::SeqCst);
+    let topmost = active && state.settings.lock().conversation_pinned;
+    CONVERSATION_TOPMOST.store(topmost, Ordering::SeqCst);
+    if topmost || !active {
+        if let Some(window) = app.get_webview_window("main") {
+            window
+                .set_always_on_top(topmost)
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(topmost)
 }
 
 #[tauri::command]
@@ -612,6 +664,14 @@ fn enter_viewer_mode(app: AppHandle) -> Result<(), String> {
     let Some(w) = app.get_webview_window("main") else {
         return Ok(());
     };
+    {
+        let mut restore = VIEWER_RESTORE.lock();
+        if restore.is_none() {
+            if let (Ok(position), Ok(size)) = (w.outer_position(), w.outer_size()) {
+                *restore = Some((position.x, position.y, size.width, size.height));
+            }
+        }
+    }
     let _ = w.set_always_on_top(false);
     let _ = w.set_resizable(true);
     let _ = w.set_skip_taskbar(false);
@@ -658,17 +718,26 @@ fn leave_viewer_mode(app: AppHandle) -> Result<(), String> {
         let _ = w.unmaximize();
     }
     let _ = w.set_skip_taskbar(true);
-    let _ = w.set_always_on_top(true);
+    let _ = w.set_always_on_top(false);
     let _ = w.set_resizable(true);
-    let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize {
-        width: 720.0,
-        height: 320.0,
-    }));
+    let _ = w.set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize {
+        width: 480.0,
+        height: 160.0,
+    })));
+    if let Some((x, y, width, height)) = VIEWER_RESTORE.lock().take() {
+        let _ = w.set_size(tauri::Size::Physical(tauri::PhysicalSize { width, height }));
+        let _ = w.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }));
+    } else {
+        let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize {
+            width: 720.0,
+            height: 560.0,
+        }));
+    }
     let _ = w.set_focus();
     Ok(())
 }
 
-/// Cards launcher: resizable window with room to stretch freely.
+/// Cards launcher: resizable; frontend owns its compact content-fit geometry.
 #[tauri::command]
 fn enter_cards_mode(app: AppHandle) -> Result<(), String> {
     let Some(w) = app.get_webview_window("main") else {
@@ -682,26 +751,9 @@ fn enter_cards_mode(app: AppHandle) -> Result<(), String> {
     let _ = w.set_resizable(true);
     let _ = w.set_max_size(Option::<tauri::Size>::None);
     let _ = w.set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize {
-        width: 520.0,
-        height: 360.0,
+        width: 480.0,
+        height: 160.0,
     })));
-    // only bump size if currently tiny (avoid fighting user resize every toggle)
-    if let Ok(size) = w.inner_size() {
-        let scale = w.scale_factor().unwrap_or(1.0);
-        let lw = size.width as f64 / scale;
-        let lh = size.height as f64 / scale;
-        if lw < 700.0 || lh < 480.0 {
-            let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize {
-                width: 860.0,
-                height: 620.0,
-            }));
-        }
-    } else {
-        let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize {
-            width: 860.0,
-            height: 620.0,
-        }));
-    }
     let _ = w.set_focus();
     Ok(())
 }
@@ -715,7 +767,6 @@ fn enter_launcher_mode(app: AppHandle) -> Result<(), String> {
         let _ = w.unmaximize();
     }
     let _ = w.set_skip_taskbar(true);
-    let _ = w.set_always_on_top(true);
     let _ = w.set_resizable(true);
     let _ = w.set_max_size(Option::<tauri::Size>::None);
     let _ = w.set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize {
@@ -731,6 +782,14 @@ fn enter_settings_mode(app: AppHandle) -> Result<(), String> {
     let Some(w) = app.get_webview_window("main") else {
         return Ok(());
     };
+    {
+        let mut restore = SETTINGS_RESTORE.lock();
+        if restore.is_none() {
+            if let (Ok(position), Ok(size)) = (w.outer_position(), w.outer_size()) {
+                *restore = Some((position.x, position.y, size.width, size.height));
+            }
+        }
+    }
     if w.is_maximized().unwrap_or(false) {
         let _ = w.unmaximize();
     }
@@ -739,13 +798,66 @@ fn enter_settings_mode(app: AppHandle) -> Result<(), String> {
     let _ = w.set_resizable(true);
     let _ = w.set_max_size(Option::<tauri::Size>::None);
     let _ = w.set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize {
-        width: 720.0,
-        height: 480.0,
+        width: 480.0,
+        height: 160.0,
     })));
-    let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize {
-        width: 920.0,
-        height: 620.0,
-    }));
+    let scale = w.scale_factor().unwrap_or(1.0);
+    let current = w
+        .inner_size()
+        .ok()
+        .map(|size| (size.width as f64 / scale, size.height as f64 / scale));
+    let current_width = current.map(|size| size.0).unwrap_or(720.0);
+    let current_height = current.map(|size| size.1).unwrap_or(480.0);
+    if current_width < 900.0 || current_height < 600.0 {
+        let monitor = w
+            .current_monitor()
+            .ok()
+            .flatten()
+            .or_else(|| app.primary_monitor().ok().flatten());
+        if let Some(monitor) = monitor {
+            let area = monitor.work_area();
+            let max_width = (area.size.width as f64 / scale - 32.0).max(480.0);
+            let max_height = (area.size.height as f64 / scale - 32.0).max(160.0);
+            let width = current_width.max(920.0).min(max_width);
+            let height = current_height.max(620.0).min(max_height);
+            let physical_width = (width * scale).round() as u32;
+            let physical_height = (height * scale).round() as u32;
+            let x = area.position.x + (area.size.width.saturating_sub(physical_width) / 2) as i32;
+            let y = area.position.y + (area.size.height.saturating_sub(physical_height) / 2) as i32;
+            let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }));
+            let _ = w.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }));
+        } else {
+            let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize {
+                width: current_width.max(920.0),
+                height: current_height.max(620.0),
+            }));
+            let _ = w.center();
+        }
+    }
+    let _ = w.set_focus();
+    Ok(())
+}
+
+#[tauri::command]
+fn leave_settings_mode(app: AppHandle, mode: String) -> Result<(), String> {
+    let Some(w) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+    if w.is_maximized().unwrap_or(false) {
+        let _ = w.unmaximize();
+    }
+    let launcher_mode = mode == "launcher";
+    let _ = w.set_skip_taskbar(launcher_mode);
+    let _ = w.set_always_on_top(false);
+    let _ = w.set_resizable(true);
+    let _ = w.set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize {
+        width: 480.0,
+        height: 160.0,
+    })));
+    if let Some((x, y, width, height)) = SETTINGS_RESTORE.lock().take() {
+        let _ = w.set_size(tauri::Size::Physical(tauri::PhysicalSize { width, height }));
+        let _ = w.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }));
+    }
     let _ = w.set_focus();
     Ok(())
 }
@@ -1192,6 +1304,7 @@ pub fn run() {
             get_apps,
             get_app_icons,
             reorder_recent,
+            remove_recent,
             get_conversations,
             save_conversation,
             delete_conversation,
@@ -1200,6 +1313,7 @@ pub fn run() {
             launch_app,
             hide_window,
             set_conversation_pin,
+            set_conversation_active,
             start_window_drag,
             resize_window,
             enter_viewer_mode,
@@ -1207,6 +1321,7 @@ pub fn run() {
             enter_cards_mode,
             enter_launcher_mode,
             enter_settings_mode,
+            leave_settings_mode,
             toggle_maximize_window,
             open_data_dir,
             pick_app_scan_folder,
@@ -1221,12 +1336,6 @@ pub fn run() {
         .setup(move |app| {
             let handle = app.handle().clone();
             let st = state_for_setup.clone();
-
-            if st.settings.lock().conversation_pinned {
-                if let Some(window) = handle.get_webview_window("main") {
-                    let _ = window.set_always_on_top(true);
-                }
-            }
 
             // register hotkey from settings, with fallbacks
             let preferred = st.settings.lock().hotkey.clone();

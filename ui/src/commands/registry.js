@@ -34,6 +34,7 @@ function register(definition) {
       placeholder: definition.placeholder || "输入内容后 Enter",
       followPlaceholder: definition.followPlaceholder || "继续输入…",
       resultKind: definition.resultKind || "chat",
+      surface: definition.surface || "chat",
       system: definition.system || null,
       defaultOrder: Number.isFinite(definition.defaultOrder)
         ? definition.defaultOrder
