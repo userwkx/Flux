@@ -15,7 +15,7 @@ use recent::RecentItem;
 use serde::{Deserialize, Serialize};
 use settings::{AiProvider, Settings};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{
@@ -35,6 +35,74 @@ static VIEWER_RESTORE: Mutex<Option<(i32, i32, u32, u32)>> = Mutex::new(None);
 static SHOW_TOPMOST_SEQ: AtomicU64 = AtomicU64::new(0);
 static CONVERSATION_ACTIVE: AtomicBool = AtomicBool::new(false);
 static CONVERSATION_TOPMOST: AtomicBool = AtomicBool::new(false);
+static WINDOW_CORNER_RADIUS: AtomicU32 = AtomicU32::new(CLASSIC_CORNER_RADIUS);
+static SETTINGS_RADIUS_RESTORE: AtomicU32 = AtomicU32::new(CLASSIC_CORNER_RADIUS);
+static VIEWER_RADIUS_RESTORE: AtomicU32 = AtomicU32::new(CLASSIC_CORNER_RADIUS);
+
+const CLASSIC_CORNER_RADIUS: u32 = 20;
+const CARDS_CORNER_RADIUS: u32 = 12;
+const SETTINGS_CORNER_RADIUS: u32 = 14;
+const VIEWER_CORNER_RADIUS: u32 = 12;
+const CONVERSATION_CORNER_RADIUS: u32 = 22;
+
+fn launcher_corner_radius(home_ui: &str) -> u32 {
+    if home_ui == "cards" {
+        CARDS_CORNER_RADIUS
+    } else {
+        CLASSIC_CORNER_RADIUS
+    }
+}
+
+#[cfg(windows)]
+fn refresh_native_window_region(window: &tauri::WebviewWindow) -> Result<(), String> {
+    use windows_sys::Win32::Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn};
+
+    let hwnd = window.hwnd().map_err(|error| error.to_string())?;
+    let size = window.outer_size().map_err(|error| error.to_string())?;
+    if size.width == 0 || size.height == 0 {
+        return Ok(());
+    }
+
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let radius = WINDOW_CORNER_RADIUS.load(Ordering::Relaxed) as f64;
+    let diameter = (radius * scale * 2.0).round().max(1.0) as i32;
+    let width = i32::try_from(size.width)
+        .unwrap_or(i32::MAX - 1)
+        .saturating_add(1);
+    let height = i32::try_from(size.height)
+        .unwrap_or(i32::MAX - 1)
+        .saturating_add(1);
+
+    unsafe {
+        let region = CreateRoundRectRgn(0, 0, width, height, diameter, diameter);
+        if region.is_null() {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        if SetWindowRgn(hwnd.0, region, 1) == 0 {
+            DeleteObject(region);
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn refresh_native_window_region(_window: &tauri::WebviewWindow) -> Result<(), String> {
+    Ok(())
+}
+
+fn set_window_corner_radius(window: &tauri::WebviewWindow, radius: u32) {
+    WINDOW_CORNER_RADIUS.store(radius, Ordering::Relaxed);
+    if let Err(error) = refresh_native_window_region(window) {
+        eprintln!("native window region error: {error}");
+    }
+}
+
+fn refresh_window_corner_radius(window: &tauri::WebviewWindow) {
+    if let Err(error) = refresh_native_window_region(window) {
+        eprintln!("native window region error: {error}");
+    }
+}
 
 fn bump_ignore_blur() {
     IGNORE_BLUR.store(true, Ordering::SeqCst);
@@ -621,10 +689,22 @@ fn set_conversation_active(
     active: bool,
 ) -> Result<bool, String> {
     CONVERSATION_ACTIVE.store(active, Ordering::SeqCst);
-    let topmost = active && state.settings.lock().conversation_pinned;
+    let (topmost, corner_radius) = {
+        let settings = state.settings.lock();
+        let base_radius = launcher_corner_radius(&settings.home_ui);
+        (
+            active && settings.conversation_pinned,
+            if active && settings.home_ui != "cards" {
+                CONVERSATION_CORNER_RADIUS
+            } else {
+                base_radius
+            },
+        )
+    };
     CONVERSATION_TOPMOST.store(topmost, Ordering::SeqCst);
-    if topmost || !active {
-        if let Some(window) = app.get_webview_window("main") {
+    if let Some(window) = app.get_webview_window("main") {
+        set_window_corner_radius(&window, corner_radius);
+        if topmost || !active {
             window
                 .set_always_on_top(topmost)
                 .map_err(|error| error.to_string())?;
@@ -664,6 +744,11 @@ fn enter_viewer_mode(app: AppHandle) -> Result<(), String> {
     let Some(w) = app.get_webview_window("main") else {
         return Ok(());
     };
+    VIEWER_RADIUS_RESTORE.store(
+        WINDOW_CORNER_RADIUS.load(Ordering::Relaxed),
+        Ordering::Relaxed,
+    );
+    set_window_corner_radius(&w, VIEWER_CORNER_RADIUS);
     {
         let mut restore = VIEWER_RESTORE.lock();
         if restore.is_none() {
@@ -714,6 +799,7 @@ fn leave_viewer_mode(app: AppHandle) -> Result<(), String> {
     let Some(w) = app.get_webview_window("main") else {
         return Ok(());
     };
+    set_window_corner_radius(&w, VIEWER_RADIUS_RESTORE.load(Ordering::Relaxed));
     if w.is_maximized().unwrap_or(false) {
         let _ = w.unmaximize();
     }
@@ -743,6 +829,7 @@ fn enter_cards_mode(app: AppHandle) -> Result<(), String> {
     let Some(w) = app.get_webview_window("main") else {
         return Ok(());
     };
+    set_window_corner_radius(&w, CARDS_CORNER_RADIUS);
     if w.is_maximized().unwrap_or(false) {
         let _ = w.unmaximize();
     }
@@ -763,6 +850,7 @@ fn enter_launcher_mode(app: AppHandle) -> Result<(), String> {
     let Some(w) = app.get_webview_window("main") else {
         return Ok(());
     };
+    set_window_corner_radius(&w, CLASSIC_CORNER_RADIUS);
     if w.is_maximized().unwrap_or(false) {
         let _ = w.unmaximize();
     }
@@ -782,6 +870,11 @@ fn enter_settings_mode(app: AppHandle) -> Result<(), String> {
     let Some(w) = app.get_webview_window("main") else {
         return Ok(());
     };
+    SETTINGS_RADIUS_RESTORE.store(
+        WINDOW_CORNER_RADIUS.load(Ordering::Relaxed),
+        Ordering::Relaxed,
+    );
+    set_window_corner_radius(&w, SETTINGS_CORNER_RADIUS);
     {
         let mut restore = SETTINGS_RESTORE.lock();
         if restore.is_none() {
@@ -843,6 +936,7 @@ fn leave_settings_mode(app: AppHandle, mode: String) -> Result<(), String> {
     let Some(w) = app.get_webview_window("main") else {
         return Ok(());
     };
+    set_window_corner_radius(&w, SETTINGS_RADIUS_RESTORE.load(Ordering::Relaxed));
     if w.is_maximized().unwrap_or(false) {
         let _ = w.unmaximize();
     }
@@ -1372,6 +1466,21 @@ pub fn run() {
             if !registered {
                 *st.hotkey.lock() = "(无热键)".into();
                 println!("No hotkey registered");
+            }
+
+            if let Some(window) = app.get_webview_window("main") {
+                let initial_radius = launcher_corner_radius(&st.settings.lock().home_ui);
+                set_window_corner_radius(&window, initial_radius);
+                let resized_window = window.clone();
+                window.on_window_event(move |event| {
+                    if matches!(
+                        event,
+                        tauri::WindowEvent::Resized(_)
+                            | tauri::WindowEvent::ScaleFactorChanged { .. }
+                    ) {
+                        refresh_window_corner_radius(&resized_window);
+                    }
+                });
             }
 
             // show main once (do this FIRST so UI loads while tray sets up)

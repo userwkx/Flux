@@ -7,11 +7,9 @@
     "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build",
-    "start": "tauri dev",
-    "test:ui": "playwright test"
+    "start": "tauri dev"
   },
   "devDependencies": {
-    "@playwright/test": "^1.61.1",
     "@tauri-apps/cli": "^2.6.2"
   }
 }

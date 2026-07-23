@@ -26,3 +26,7 @@
 Thumbs.db
 /playwright-report/
 /test-results/
+/tests/
+/playwright.config.mjs
+/docs/
+/dist/
