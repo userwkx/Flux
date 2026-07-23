@@ -1,3 +1,18 @@
+import { commandRegistry } from "./commands/index.js";
+import { createChatRenderer } from "./features/chat-renderer.js";
+import { createFileModeController } from "./features/file-mode.js";
+import { enhanceCodeBlocks, escapeHtml, renderMarkdown } from "./shared/markdown.js";
+import {
+  defaultEfforts,
+  formatProviderFormat,
+  headersToText,
+  modelLabelOf,
+  normalizeProviderConfig,
+  parseJsonObject,
+  prettyJson,
+  textToHeaders,
+} from "./shared/provider-utils.js";
+
 const api = window.launcher;
 
 const els = {
@@ -16,21 +31,26 @@ const els = {
   listCount: document.getElementById("list-count"),
   idleHint: document.getElementById("idle-hint"),
   aiSection: document.getElementById("ai-section"),
+  fileSection: document.getElementById("file-section"),
+  fileStatus: document.getElementById("file-status"),
+  fileModeAuto: document.getElementById("file-mode-auto"),
+  fileModeBrowser: document.getElementById("file-mode-browser"),
+  fileAllowFileAccess: document.getElementById("file-allow-file-access"),
+  fileAccessOption: document.getElementById("file-access-option"),
+  fileModeNote: document.getElementById("file-mode-note"),
   aiThread: document.getElementById("ai-thread"),
-  aiActions: document.getElementById("ai-actions"),
   aiStatus: document.getElementById("ai-status"),
   btnAiStop: document.getElementById("btn-ai-stop"),
   aiMoreWrap: document.querySelector(".ai-more-wrap"),
   aiMoreMenu: document.getElementById("ai-more-menu"),
   btnAiMore: document.getElementById("btn-ai-more"),
   aiMenuNew: document.getElementById("ai-menu-new"),
+  aiMenuFollowup: document.getElementById("ai-menu-followup"),
   aiMenuHistory: document.getElementById("ai-menu-history"),
   aiMenuMode: document.getElementById("ai-menu-mode"),
   conversationPanel: document.getElementById("conversation-panel"),
   conversationList: document.getElementById("conversation-list"),
   btnCloseConversations: document.getElementById("btn-close-conversations"),
-  btnFollowup: document.getElementById("btn-followup"),
-  btnNewchat: document.getElementById("btn-newchat"),
   pageMain: document.getElementById("page-main"),
   pageConversation: document.getElementById("page-conversation"),
   conversationThreadHost: document.getElementById("conversation-thread-host"),
@@ -139,9 +159,6 @@ let mode = "browse";
 /** null | ai | fy | ... when in slash command mode */
 let cmdMode = null;
 
-const commandRegistry = window.FluxCommands;
-if (!commandRegistry) throw new Error("FluxCommands registry is not loaded");
-
 function commandPreferences(source = settingsSnap) {
   return commandRegistry.normalizePreferences({
     commandOrder: source?.commandOrder,
@@ -229,135 +246,10 @@ let streamRenderFrame = 0;
 let conversations = [];
 let currentConversationId = null;
 let viewerMarkdown = "";
-
-if (window.marked?.setOptions) {
-  window.marked.setOptions({
-    gfm: true,
-    breaks: true,
-  });
-}
-
-function renderMarkdown(text) {
-  const raw = String(text || "");
-  try {
-    if (window.marked?.parse) {
-      return window.marked.parse(raw);
-    }
-  } catch (e) {
-    console.warn("md", e);
-  }
-  return escapeHtml(raw).replace(/\n/g, "<br>");
-}
-
-const CODE_LANGUAGE_LABELS = {
-  py: "Python",
-  python: "Python",
-  js: "JavaScript",
-  javascript: "JavaScript",
-  ts: "TypeScript",
-  typescript: "TypeScript",
-  jsx: "JSX",
-  tsx: "TSX",
-  rs: "Rust",
-  rust: "Rust",
-  sh: "Bash",
-  bash: "Bash",
-  shell: "Shell",
-  powershell: "PowerShell",
-  ps1: "PowerShell",
-  json: "JSON",
-  html: "HTML",
-  css: "CSS",
-  sql: "SQL",
-  go: "Go",
-  java: "Java",
-  c: "C",
-  cpp: "C++",
-};
-
-function highlightCode(code, language) {
-  const source = code.textContent || "";
-  const keywordPattern = /\b(?:and|as|async|await|break|case|catch|class|const|continue|def|do|else|enum|except|export|extends|false|False|finally|fn|for|from|function|if|impl|import|in|interface|let|loop|match|mod|mut|new|None|null|of|or|pass|pub|raise|return|self|static|struct|super|switch|this|throw|trait|true|True|try|type|typeof|undefined|use|var|where|while|with|yield)\b/;
-  const tokenPattern = /(\/\*[\s\S]*?\*\/|\/\/[^\n]*|#[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b\d+(?:\.\d+)?\b|\b(?:and|as|async|await|break|case|catch|class|const|continue|def|do|else|enum|except|export|extends|false|False|finally|fn|for|from|function|if|impl|import|in|interface|let|loop|match|mod|mut|new|None|null|of|or|pass|pub|raise|return|self|static|struct|super|switch|this|throw|trait|true|True|try|type|typeof|undefined|use|var|where|while|with|yield)\b)/g;
-  code.innerHTML = source.split(tokenPattern).map((token) => {
-    if (!token) return "";
-    let kind = "";
-    if (/^(?:\/\*|\/\/|#)/.test(token)) kind = "comment";
-    else if (/^["'`]/.test(token)) kind = "string";
-    else if (/^\d/.test(token)) kind = "number";
-    else if (keywordPattern.test(token)) kind = "keyword";
-    const safe = escapeHtml(token);
-    return kind ? `<span class="code-token-${kind}">${safe}</span>` : safe;
-  }).join("");
-  code.dataset.highlighted = language || "plain";
-}
-
-function enhanceCodeBlocks(root) {
-  if (!root) return;
-  root.querySelectorAll("pre").forEach((pre) => {
-    if (pre.closest(".code-block-shell")) return;
-    const code = pre.querySelector("code");
-    const languageClass = [...(code?.classList || [])].find((name) => name.startsWith("language-"));
-    const language = languageClass ? languageClass.slice(9).toLowerCase() : "";
-    if (code) highlightCode(code, language);
-
-    const shell = document.createElement("div");
-    shell.className = "code-block-shell";
-    const header = document.createElement("div");
-    header.className = "code-block-header";
-    const label = document.createElement("span");
-    label.className = "code-language";
-    label.innerHTML = `<span class="code-language-icon">&lt;/&gt;</span>${escapeHtml(CODE_LANGUAGE_LABELS[language] || language || "Code")}`;
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "code-copy";
-    btn.innerHTML = '<span class="code-copy-glyph" aria-hidden="true"></span>';
-    btn.setAttribute("aria-label", "复制代码");
-    btn.title = "复制代码";
-    btn.addEventListener("click", async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const text = code ? code.innerText : pre.innerText;
-      const done = (copied) => {
-        btn.classList.toggle("copied", copied);
-        btn.setAttribute("aria-label", copied ? "已复制" : "复制代码");
-        btn.title = copied ? "已复制" : "复制代码";
-        setTimeout(() => {
-          btn.classList.remove("copied");
-          btn.setAttribute("aria-label", "复制代码");
-          btn.title = "复制代码";
-        }, 1200);
-      };
-      try {
-        await navigator.clipboard.writeText(text.replace(/\n$/, ""));
-        done(true);
-      } catch {
-        const ta = document.createElement("textarea");
-        ta.value = text;
-        document.body.appendChild(ta);
-        ta.select();
-        try {
-          document.execCommand("copy");
-          done(true);
-        } catch {
-          done(false);
-        }
-        ta.remove();
-      }
-    });
-    pre.replaceWith(shell);
-    header.append(label, btn);
-    shell.append(header, pre);
-  });
-}
-
-function escapeHtml(s) {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+const fileMode = createFileModeController(els);
+const renderFileSection = () => fileMode.render();
+const setFileOpenMode = (nextMode) => fileMode.setOpenMode(nextMode);
+const setFileAllowFileAccess = (enabled) => fileMode.setAllowFileAccess(enabled);
 
 function subseq(hay, needle) {
   if (!hay || !needle) return false;
@@ -754,260 +646,26 @@ function visibleItems() {
   return items;
 }
 
-function upsertToolRow(payload) {
-  if (!payload || !payload.id) return;
-  const i = toolRows.findIndex((t) => t.id === payload.id);
-  const row = {
-    id: payload.id,
-    kind: payload.kind || "tool",
-    status: payload.status || "running",
-    title: payload.title || payload.kind || "tool",
-    detail: payload.detail || "",
-    url: payload.url || "",
-  };
-  if (i >= 0) toolRows[i] = { ...toolRows[i], ...row };
-  else toolRows.push(row);
-  renderThread({ streaming: aiBusy, errorText: "" });
-}
-
-function renderToolRows(container) {
-  if (!toolRows.length) return;
-  const wrap = document.createElement("div");
-  wrap.className = "ai-tools";
-  for (const t of toolRows) {
-    const row = document.createElement("div");
-    row.className = `ai-tool-row is-${t.status || "running"}`;
-    const icon = t.kind === "webfetch" ? "%" : "◈";
-    const st =
-      t.status === "done" ? "✓" : t.status === "error" ? "✗" : "•";
-    const tip = [t.title, t.detail, t.url].filter(Boolean).join("\n");
-    const titleText =
-      t.status === "error" && t.detail
-        ? `${t.title} — ${t.detail}`
-        : t.title;
-    row.innerHTML = `<span class="tool-icon">${icon}</span>
-      <span class="tool-title" title="${escapeHtml(tip)}">${escapeHtml(titleText)}</span>
-      <span class="tool-status">${st}</span>`;
-    wrap.appendChild(row);
-  }
-  container.appendChild(wrap);
-}
-
 function updateConversationJumpBottom() {
   if (!els.conversationJumpBottom || !els.aiThread) return;
   const distance = els.aiThread.scrollHeight - els.aiThread.scrollTop - els.aiThread.clientHeight;
   els.conversationJumpBottom.hidden = !conversationModeOpen || distance < 90;
 }
 
-function scheduleStreamingRender() {
-  if (streamRenderFrame) return;
-  streamRenderFrame = requestAnimationFrame(() => {
-    streamRenderFrame = 0;
-    renderThread({ streaming: true });
-  });
-}
-
-async function copyAssistantMessage(text, button) {
-  try {
-    await navigator.clipboard.writeText(text);
-    button.classList.add("is-copied");
-    button.title = "已复制";
-    button.setAttribute("aria-label", "已复制");
-    setTimeout(() => {
-      button.classList.remove("is-copied");
-      button.title = "复制";
-      button.setAttribute("aria-label", "复制");
-    }, 1200);
-  } catch {
-    button.title = "复制失败";
-  }
-}
-
-function createAssistantActions(content) {
-  const actions = document.createElement("div");
-  actions.className = "ai-message-actions";
-
-  const copy = document.createElement("button");
-  copy.type = "button";
-  copy.className = "ai-message-action ai-message-copy";
-  copy.title = "复制";
-  copy.setAttribute("aria-label", "复制");
-  copy.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>';
-  copy.addEventListener("click", () => copyAssistantMessage(content, copy));
-
-  const expand = document.createElement("button");
-  expand.type = "button";
-  expand.className = "ai-message-action";
-  expand.title = "全屏查看";
-  expand.setAttribute("aria-label", "全屏查看");
-  expand.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>';
-  expand.addEventListener("click", () => openViewer(content));
-
-  actions.append(copy, expand);
-  return actions;
-}
-
-function updateAiStopControls() {
-  els.btnAiStop?.classList.toggle("hidden", !aiBusy);
-  if (els.btnAiStop) els.btnAiStop.disabled = aiStopping;
-  els.conversationSend?.classList.toggle("is-stopping", aiBusy);
-}
-
-function renderThread(opts = {}) {
-  const { streaming = false, errorText = "" } = opts;
-  if (!els.aiThread) return;
-  updateAiStopControls();
-  const previousScrollTop = els.aiThread.scrollTop;
-  const shouldStickToBottom =
-    els.aiThread.scrollHeight - els.aiThread.scrollTop - els.aiThread.clientHeight < 90;
-  const def = currentModeDef();
-  const hasDedicatedResult =
-    typeof def?.parseResult === "function" && typeof def?.renderResult === "function";
-
-  els.aiThread.innerHTML = "";
-  els.aiThread.classList.toggle("fy-thread", def?.resultKind === "translate");
-
-  if (hasDedicatedResult) {
-    const lastUser = [...chatHistory].reverse().find((m) => m.role === "user");
-    const lastAsst = [...chatHistory].reverse().find((m) => m.role === "assistant");
-
-    if (lastUser) {
-      const qbar = document.createElement("div");
-      qbar.className = "fy-qbar";
-      qbar.innerHTML = `<span class="fy-cmd">${escapeHtml(def.label)}</span><span class="fy-q">${escapeHtml(lastUser.content)}</span>`;
-      els.aiThread.appendChild(qbar);
-    }
-
-    if (streaming || (aiBusy && !errorText && !lastAsst)) {
-      const think = document.createElement("div");
-      think.className = "fy-card thinking";
-      think.innerHTML = `<div class="ai-thinking" aria-label="${escapeHtml(def.title)}中">
-        <span class="ai-thinking-dots"><i></i><i></i><i></i></span>
-        <span class="ai-thinking-label">${escapeHtml(def.title)}中</span>
-      </div>`;
-      els.aiThread.appendChild(think);
-    } else if (lastAsst) {
-      const payload = def.parseResult(lastAsst.content);
-      if (payload) els.aiThread.appendChild(def.renderResult(payload));
-    }
-
-    if (errorText) {
-      const err = document.createElement("div");
-      err.className = "ai-msg error";
-      err.textContent = errorText;
-      els.aiThread.appendChild(err);
-    }
-
-    // Dedicated result views manage their own compact output.
-    els.aiActions?.classList.add("hidden");
-    if (shouldStickToBottom) els.aiThread.scrollTop = els.aiThread.scrollHeight;
-    else els.aiThread.scrollTop = previousScrollTop;
-    updateConversationJumpBottom();
-    scheduleFit();
-    return;
-  }
-
-  // —— default AI chat thread ——
-  let toolsPlaced = false;
-
-  chatHistory.forEach((m, idx) => {
-    const bubble = document.createElement("div");
-    bubble.className = `ai-msg ${m.role === "user" ? "user" : "assistant"}`;
-    const head = document.createElement("div");
-    head.className = "ai-msg-head";
-    const role = document.createElement("div");
-    role.className = "ai-role";
-    role.textContent = m.role === "user" ? "你" : "AI";
-    head.appendChild(role);
-    const body = document.createElement("div");
-    body.className = "ai-md";
-    if (m.role === "assistant") {
-      body.innerHTML = renderMarkdown(m.content);
-      enhanceCodeBlocks(body);
-    } else {
-      body.textContent = m.content;
-    }
-    if (Array.isArray(m.attachments) && m.attachments.length) {
-      const files = document.createElement("div");
-      files.className = "ai-message-attachments";
-      for (const attachment of m.attachments) {
-        const file = document.createElement("span");
-        file.textContent = attachment.name || "附件";
-        file.title = attachment.name || "附件";
-        files.appendChild(file);
-      }
-      body.appendChild(files);
-    }
-    bubble.appendChild(head);
-    bubble.appendChild(body);
-    if (m.role === "assistant") bubble.appendChild(createAssistantActions(m.content));
-    els.aiThread.appendChild(bubble);
-
-    const isLastUser =
-      m.role === "user" &&
-      !chatHistory.slice(idx + 1).some((x) => x.role === "user");
-    if (isLastUser && toolRows.length) {
-      renderToolRows(els.aiThread);
-      toolsPlaced = true;
-    }
-  });
-
-  if (!toolsPlaced && toolRows.length) {
-    renderToolRows(els.aiThread);
-  }
-
-  if (streaming || (aiBusy && !errorText)) {
-    const hasText = !!(streamingAssistant && streamingAssistant.trim());
-    const bubble = document.createElement("div");
-    bubble.className = `ai-msg assistant ${hasText ? "streaming" : "thinking"}`;
-    const head = document.createElement("div");
-    head.className = "ai-msg-head";
-    const role = document.createElement("div");
-    role.className = "ai-role";
-    role.textContent = "AI";
-    head.appendChild(role);
-    const body = document.createElement("div");
-    body.className = "ai-md";
-    if (!hasText) {
-      body.innerHTML = `<div class="ai-thinking" aria-label="思考中">
-        <span class="ai-thinking-dots"><i></i><i></i><i></i></span>
-        <span class="ai-thinking-label">思考中</span>
-      </div>`;
-    } else {
-      body.innerHTML = renderMarkdown(streamingAssistant || "");
-      enhanceCodeBlocks(body);
-    }
-    bubble.appendChild(head);
-    bubble.appendChild(body);
-    els.aiThread.appendChild(bubble);
-  }
-
-  if (errorText) {
-    const bubble = document.createElement("div");
-    bubble.className = "ai-msg error";
-    const role = document.createElement("div");
-    role.className = "ai-role";
-    role.textContent = "错误";
-    const body = document.createElement("div");
-    body.className = "ai-md";
-    body.textContent = errorText;
-    bubble.appendChild(role);
-    bubble.appendChild(body);
-    els.aiThread.appendChild(bubble);
-  }
-
-  const canFollow =
-    !aiBusy &&
-    chatHistory.length > 0 &&
-    chatHistory.some((m) => m.role === "assistant") &&
-    !errorText;
-  els.aiActions?.classList.toggle("hidden", !canFollow);
-
-  if (shouldStickToBottom) els.aiThread.scrollTop = els.aiThread.scrollHeight;
-  else els.aiThread.scrollTop = previousScrollTop;
-  updateConversationJumpBottom();
-  scheduleFit();
-}
+const chatRenderer = createChatRenderer({
+  els,
+  getState: () => ({ aiBusy, aiStopping, chatHistory, conversationModeOpen, streamingAssistant, toolRows }),
+  getStreamRenderFrame: () => streamRenderFrame,
+  setStreamRenderFrame: (value) => { streamRenderFrame = value; },
+  currentModeDef,
+  openViewer,
+  updateConversationJumpBottom,
+  scheduleFit,
+  renderMarkdown,
+  enhanceCodeBlocks,
+  escapeHtml,
+});
+const { renderThread, scheduleStreamingRender, updateAiStopControls, upsertToolRow } = chatRenderer;
 
 function render() {
   const q = els.q.value;
@@ -1028,6 +686,7 @@ function render() {
       els.listSection?.classList.toggle("hidden", true);
       els.idleHint?.classList.toggle("hidden", true);
       els.aiSection?.classList.toggle("hidden", true);
+      els.fileSection?.classList.toggle("hidden", true);
       scheduleFit();
       return;
     }
@@ -1081,20 +740,23 @@ function render() {
   }
 
   const rec = mode === "browse" ? visibleRecent() : [];
+  const def = currentModeDef();
   const showRecent = mode === "browse" && rec.length > 0;
   const showBuiltin = mode === "browse" && isCommandEnabled("ai");
   const showList = mode === "search";
-  const showAi = mode === "command";
-  const def = currentModeDef();
+  const showFile = mode === "command" && def?.id === "file";
+  const showAi = mode === "command" && !showFile;
 
   els.recentSection?.classList.toggle("hidden", !showRecent);
   els.builtinSection?.classList.toggle("hidden", !showBuiltin);
   els.listSection?.classList.toggle("hidden", !showList);
   els.idleHint?.classList.toggle("hidden", true);
   els.aiSection?.classList.toggle("hidden", !showAi);
+  els.fileSection?.classList.toggle("hidden", !showFile);
+  if (showFile) renderFileSection();
 
   if (els.q) {
-    if (showAi && def) {
+    if ((showAi || showFile) && def) {
       els.modePrefix?.classList.remove("hidden");
       if (els.modePrefix) {
         els.modePrefix.textContent = def.displayPrefix || def.label;
@@ -1379,100 +1041,12 @@ function ensureProviders() {
   }
 }
 
-function defaultEfforts() {
-  return [
-    { id: "low", label: "低", requestBody: {} },
-    { id: "medium", label: "中", requestBody: {} },
-    { id: "high", label: "高", requestBody: {} },
-    { id: "xhigh", label: "极高", requestBody: {} },
-  ];
-}
-
-function normalizeProviderConfig(provider) {
-  if (!provider || typeof provider !== "object") return;
-  if (!provider.requestBody || typeof provider.requestBody !== "object" || Array.isArray(provider.requestBody)) provider.requestBody = {};
-  if (!provider.extraOptions || typeof provider.extraOptions !== "object" || Array.isArray(provider.extraOptions)) provider.extraOptions = {};
-  if (!provider.modelConfigs || typeof provider.modelConfigs !== "object" || Array.isArray(provider.modelConfigs)) provider.modelConfigs = {};
-  if (!provider.modelLabels || typeof provider.modelLabels !== "object") provider.modelLabels = {};
-  for (const id of provider.models || []) {
-    const config = provider.modelConfigs[id] || {};
-    config.label = provider.modelLabels[id] || config.label || "";
-    config.contextWindow = Number(config.contextWindow) || null;
-    config.maxOutputTokens = Number(config.maxOutputTokens) || null;
-    config.headers = config.headers && typeof config.headers === "object" ? config.headers : {};
-    config.requestBody = config.requestBody && typeof config.requestBody === "object" && !Array.isArray(config.requestBody) ? config.requestBody : {};
-    config.efforts = Array.isArray(config.efforts) && config.efforts.length ? config.efforts : defaultEfforts();
-    config.defaultEffort = config.defaultEffort || "medium";
-    provider.modelConfigs[id] = config;
-  }
-}
-
-function parseJsonObject(text, label) {
-  const raw = String(text || "").trim();
-  if (!raw) return {};
-  let value;
-  try {
-    value = JSON.parse(raw);
-  } catch {
-    throw new Error(`${label}不是有效 JSON`);
-  }
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${label}必须是 JSON 对象`);
-  }
-  return value;
-}
-
-function prettyJson(value) {
-  return JSON.stringify(value && typeof value === "object" ? value : {}, null, 2);
-}
-
 function getEditingProvider() {
   ensureProviders();
   return (
     settingsSnap.aiProviders.find((p) => p.id === editingProviderId) ||
     settingsSnap.aiProviders[0]
   );
-}
-
-function headersToText(h) {
-  if (!h || typeof h !== "object") return "";
-  return Object.entries(h)
-    .map(([k, v]) => `${k}: ${v}`)
-    .join("\n");
-}
-
-function textToHeaders(text) {
-  const out = {};
-  String(text || "")
-    .split(/\r?\n/)
-    .forEach((line) => {
-      const s = line.trim();
-      if (!s) return;
-      const i = s.indexOf(":");
-      if (i <= 0) return;
-      const k = s.slice(0, i).trim();
-      const v = s.slice(i + 1).trim();
-      if (k) out[k] = v;
-    });
-  return out;
-}
-
-function formatLabel(fmt) {
-  return (
-    {
-      openai_compatible: "OpenAI Compatible",
-      openai_responses: "OpenAI Responses",
-      anthropic: "Anthropic",
-      google_gemini: "Google Gemini",
-    }[fmt] || fmt
-  );
-}
-
-function modelLabelOf(provider, id) {
-  const map = provider.modelLabels || provider.model_labels || {};
-  const lab = map[id];
-  if (lab && lab.trim()) return lab;
-  return id;
 }
 
 function fillModelSelect(provider) {
@@ -1696,7 +1270,7 @@ function renderProviderList() {
     if (p.id === editingProviderId) row.classList.add("active");
     if (p.id === settingsSnap.activeProviderId) row.classList.add("current");
     row.innerHTML = `<span class="pc-name">${escapeHtml(p.name || "未命名")}</span>
-      <span class="pc-meta">${escapeHtml(formatLabel(p.format))}${
+      <span class="pc-meta">${escapeHtml(formatProviderFormat(p.format))}${
       p.id === settingsSnap.activeProviderId ? " · 使用中" : ""
     }</span>`;
     row.addEventListener("click", () => {
@@ -2186,8 +1760,8 @@ async function persistAppScanSettings(previous) {
   }
 }
 
-async function addAppScanPath() {
-  const path = normalizeAppScanPath(els.appScanPathInput?.value);
+async function addAppScanPath(value = els.appScanPathInput?.value) {
+  const path = normalizeAppScanPath(value);
   if (!path) {
     els.appScanPathInput?.focus();
     return;
@@ -2203,6 +1777,16 @@ async function addAppScanPath() {
   if (els.appScanPathInput) els.appScanPathInput.value = "";
   renderAppScanPaths();
   await persistAppScanSettings(previous);
+}
+
+async function pickAppScanPath() {
+  try {
+    const path = await api.pickAppScanFolder();
+    if (path) await addAppScanPath(path);
+  } catch (error) {
+    console.warn("pick app scan folder", error);
+    window.alert(`选择软件目录失败: ${error?.message || error}`);
+  }
 }
 
 async function removeAppScanPath(path) {
@@ -2953,12 +2537,22 @@ function exitConversationMode() {
   els.pageConversation?.classList.add("hidden");
   els.pageMain?.classList.remove("hidden");
   if (els.aiThread && els.aiSection && els.aiThread.parentElement !== els.aiSection) {
-    els.aiSection.insertBefore(els.aiThread, els.aiActions || null);
+    els.aiSection.append(els.aiThread);
   }
   render();
   if (homeUi === "cards") api.enterCardsMode?.().catch(() => {});
   else api.enterLauncherMode?.().catch(() => {});
   requestAnimationFrame(() => els.q?.focus());
+}
+
+function enterFileModeFromConversation(body = "") {
+  if (conversationModeOpen) exitConversationMode();
+  if (!enterCommandMode("file", { clearBody: true, keepHistory: false })) return;
+  if (els.q) {
+    els.q.value = body;
+    els.q.focus();
+  }
+  render();
 }
 
 function startFollowup() {
@@ -3000,6 +2594,10 @@ async function sendAi() {
   const def = currentModeDef();
   if (!def) return;
   let prompt = getCommandBody();
+  if (conversationModeOpen && def.id === "file") {
+    enterFileModeFromConversation(prompt);
+    return;
+  }
   if (mode !== "command" && !cmdMode) return;
   if (aiBusy) return;
   if (!String(prompt).trim() && pendingAttachments.length === 0) {
@@ -3008,6 +2606,32 @@ async function sendAi() {
       return;
     }
     renderThread({ errorText: "请输入内容" });
+    return;
+  }
+
+  if (typeof def?.run === "function") {
+    try {
+      await def.run(String(prompt).trim(), api, {
+        mode: fileMode.openMode,
+        allowFileAccess: fileMode.allowFileAccess,
+      });
+      if (els.q) els.q.value = "";
+      if (conversationModeOpen && els.conversationInput) {
+        els.conversationInput.value = "";
+        updateConversationComposer();
+      }
+      if (def.id === "file") {
+          if (els.fileStatus) els.fileStatus.textContent = fileMode.openMode === "browser" ? "已在浏览器打开" : "已打开";
+      } else if (els.aiStatus) {
+        els.aiStatus.textContent = "已完成";
+      }
+    } catch (error) {
+      if (def.id === "file") {
+        if (els.fileStatus) els.fileStatus.textContent = error?.message || String(error);
+      } else {
+        renderThread({ errorText: error?.message || String(error) });
+      }
+    }
     return;
   }
 
@@ -3298,17 +2922,24 @@ els.q.addEventListener("input", () => {
 
 els.btnSettings?.addEventListener("click", () => showPage("settings"));
 els.btnBack?.addEventListener("click", () => showPage("main"));
-els.btnFollowup?.addEventListener("click", () => startFollowup());
 els.btnAiStop?.addEventListener("click", stopAi);
 els.btnViewerBack?.addEventListener("click", () => closeViewer());
 els.btnViewerCopy?.addEventListener("click", () => copyViewerAll());
-els.btnNewchat?.addEventListener("click", startNewConversation);
 els.btnAiMore?.addEventListener("click", () => {
   setAiMoreMenu(!els.aiMoreMenu?.classList.contains("is-open"));
 });
 els.aiMenuNew?.addEventListener("click", () => {
   setAiMoreMenu(false);
   startNewConversation();
+});
+els.aiMenuFollowup?.addEventListener("click", () => {
+  setAiMoreMenu(false);
+  startFollowup();
+});
+els.fileModeAuto?.addEventListener("click", () => setFileOpenMode("auto"));
+els.fileModeBrowser?.addEventListener("click", () => setFileOpenMode("browser"));
+els.fileAllowFileAccess?.addEventListener("change", () => {
+  setFileAllowFileAccess(els.fileAllowFileAccess.checked);
 });
 els.aiMenuHistory?.addEventListener("click", () => {
   setAiMoreMenu(false);
@@ -3342,6 +2973,10 @@ els.conversationFileInput?.addEventListener("change", () => addConversationAttac
 els.conversationInput?.addEventListener("input", () => {
   const parsed = parseSlashInput(els.conversationInput.value);
   if (parsed?.kind === "mode") {
+    if (parsed.def.id === "file") {
+      enterFileModeFromConversation(parsed.body);
+      return;
+    }
     cmdMode = parsed.def.id;
     mode = "command";
     els.conversationInput.value = parsed.body;
@@ -3431,7 +3066,7 @@ els.proxyUrlInput?.addEventListener("change", async () => {
     console.warn(e);
   }
 });
-els.btnAddAppScanPath?.addEventListener("click", addAppScanPath);
+els.btnAddAppScanPath?.addEventListener("click", pickAppScanPath);
 els.appScanPathInput?.addEventListener("keydown", (event) => {
   if (event.key !== "Enter") return;
   event.preventDefault();

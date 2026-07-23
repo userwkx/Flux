@@ -52,6 +52,8 @@
     enterSettingsMode: () => invoke("enter_settings_mode"),
     toggleMaximizeWindow: () => invoke("toggle_maximize_window"),
     openDataDir: () => invoke("open_data_dir"),
+    pickAppScanFolder: () => invoke("pick_app_scan_folder"),
+    openFileUrl: (url, options) => invoke("open_file_url", { url, options: options || null }),
     proxyStatus: () => invoke("proxy_status"),
     refreshIndex: () => invoke("refresh_app_index"),
     setHotkey: (hotkey) => invoke("set_hotkey", { hotkey }),

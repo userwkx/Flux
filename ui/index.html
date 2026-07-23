@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Flux</title>
+    <link rel="stylesheet" href="vendor/katex/katex.min.css" />
     <link rel="stylesheet" href="src/styles.css" />
   </head>
   <body class="theme-white">
@@ -120,6 +121,11 @@
                     <span class="ai-more-copy">新对话</span>
                     <span class="ai-menu-info" role="img" aria-label="清空当前内容" data-tooltip="清空当前内容">i</span>
                   </button>
+                  <button type="button" class="ai-more-item hidden" id="ai-menu-followup" role="menuitem">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 8h10M7 12h7M9 18l-4 3v-5a7 7 0 1 1 4 2Z"/></svg>
+                    <span class="ai-more-copy">追问</span>
+                    <span class="ai-menu-info" role="img" aria-label="继续当前对话" data-tooltip="继续当前对话">i</span>
+                  </button>
                   <button type="button" class="ai-more-item" id="ai-menu-history" role="menuitem" aria-expanded="false">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>
                     <span class="ai-more-copy">历史</span>
@@ -147,9 +153,35 @@
             </div>
           </div>
           <div class="ai-thread" id="ai-thread"></div>
-          <div class="ai-actions hidden" id="ai-actions">
-            <button type="button" class="btn-secondary" id="btn-followup">追问</button>
-            <button type="button" class="btn-ghost" id="btn-newchat">新对话</button>
+        </section>
+
+        <section id="file-section" class="section file-section hidden" aria-label="本地文件打开">
+          <div class="file-section-head">
+            <h2>本地打开</h2>
+            <span id="file-status" class="file-status" role="status"></span>
+          </div>
+          <div class="file-native-options" role="group" aria-label="打开方式">
+            <button type="button" class="file-mode-row" id="file-mode-auto" aria-pressed="true">
+              <span class="file-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h6l2 2h8v10H4z"/><path d="M4 6v-2h6l2 2"/></svg></span>
+              <span class="file-row-label">自动</span>
+              <span class="settings-info-tip" tabindex="0" role="img" aria-label="自动模式说明" data-tooltip="交给 Windows 的默认关联应用打开文件。">i</span>
+              <span class="file-mode-selected" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg></span>
+            </button>
+            <button type="button" class="file-mode-row" id="file-mode-browser" aria-pressed="false">
+              <span class="file-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c2.5 2.2 3.7 4.9 3.7 8S14.5 17.8 12 20M12 4C9.5 6.2 8.3 8.9 8.3 12s1.2 5.8 3.7 8"/></svg></span>
+              <span class="file-row-label">浏览器</span>
+              <span class="settings-info-tip" tabindex="0" role="img" aria-label="浏览器模式说明" data-tooltip="始终用 Chrome 或 Edge 打开本地文件。">i</span>
+              <span class="file-mode-selected" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg></span>
+            </button>
+            <div class="file-access-option" id="file-access-option">
+              <span class="file-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 21s7-3.5 7-9V5l-7-3-7 3v7c0 5.5 7 9 7 9Z"/><path d="m9.5 12 1.7 1.7 3.6-3.6"/></svg></span>
+              <span class="file-row-label">允许本地资源</span>
+              <span class="settings-info-tip" tabindex="0" role="img" aria-label="本地资源权限说明" data-tooltip="浏览器会以 --allow-file-access-from-files 启动独立配置。该模式会降低本地文件安全限制，仅在确认文件可信时开启。">i</span>
+              <label class="file-toggle" title="允许本地 HTML 访问本地资源">
+                <input type="checkbox" id="file-allow-file-access" />
+                <span aria-hidden="true"></span>
+              </label>
+            </div>
           </div>
         </section>
 
@@ -287,11 +319,10 @@
                 <div class="s-row scan-folders-row">
                   <div class="s-row-text">
                     <div class="s-row-title">软件目录</div>
-                    <div class="s-row-desc">添加存放便携软件的文件夹，扫描其中的 .exe 和快捷方式</div>
+                    <div class="s-row-desc">从系统文件夹选择器添加便携软件目录，扫描其中的 .exe 和快捷方式</div>
                     <div class="scan-folder-list" id="app-scan-path-list"></div>
                     <div class="scan-folder-add">
-                      <input id="app-scan-path-input" class="s-input" type="text" placeholder="例如 D:\Tools 或下载目录" spellcheck="false" aria-label="软件目录路径" />
-                      <button type="button" class="s-btn" id="btn-add-app-scan-path">添加</button>
+                      <button type="button" class="s-btn" id="btn-add-app-scan-path">选择目录</button>
                     </div>
                   </div>
                 </div>
@@ -511,12 +542,9 @@
       </div>
     </div>
     <script src="vendor/marked.min.js"></script>
+    <script src="vendor/katex/katex.min.js"></script>
     <script src="src/tauri-bridge.js"></script>
     <script src="src/dropdown.js"></script>
-    <script src="src/commands/registry.js"></script>
-    <script src="src/commands/ai.js"></script>
-    <script src="src/commands/translate.js"></script>
-    <script src="src/commands/file.js"></script>
-    <script src="src/app.js"></script>
+    <script type="module" src="src/app.js"></script>
   </body>
 </html>

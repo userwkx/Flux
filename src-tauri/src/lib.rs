@@ -12,9 +12,9 @@ use conversations::Conversation;
 use futures_util::future::{AbortHandle, Abortable};
 use parking_lot::Mutex;
 use recent::RecentItem;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use settings::{AiProvider, Settings};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -915,6 +915,152 @@ fn open_data_dir(state: State<Arc<AppState>>) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn pick_app_scan_folder() -> Result<Option<String>, String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        let script = r#"
+Add-Type -AssemblyName System.Windows.Forms
+$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+$dialog.Description = '选择要扫描的软件目录'
+$dialog.ShowNewFolderButton = $false
+if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+  [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+  [Console]::Write($dialog.SelectedPath)
+}
+"#;
+        let mut command = std::process::Command::new("powershell.exe");
+        command.args([
+            "-NoProfile",
+            "-STA",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            script,
+        ]);
+        command.creation_flags(0x0800_0000);
+        let output = command
+            .output()
+            .map_err(|e| format!("无法打开目录选择器: {e}"))?;
+        if !output.status.success() {
+            let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if error.is_empty() {
+                "目录选择器未能启动".into()
+            } else {
+                error
+            });
+        }
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        return Ok((!path.is_empty()).then_some(path));
+    }
+
+    #[cfg(not(windows))]
+    Ok(None)
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FileOpenOptions {
+    mode: String,
+    allow_file_access: bool,
+}
+
+#[cfg(windows)]
+fn open_path_with_shell(path: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+
+    let operation: Vec<u16> = "open".encode_utf16().chain(Some(0)).collect();
+    let target: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            operation.as_ptr(),
+            target.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            1,
+        )
+    };
+    if (result as isize) <= 32 {
+        return Err(format!(
+            "无法打开文件（Windows 错误码 {}）",
+            result as isize
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn chromium_browser_path() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    for variable in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"] {
+        if let Some(base) = std::env::var_os(variable) {
+            let base = PathBuf::from(base);
+            candidates.push(base.join("Google/Chrome/Application/chrome.exe"));
+            candidates.push(base.join("Microsoft/Edge/Application/msedge.exe"));
+        }
+    }
+    candidates.into_iter().find(|path| path.is_file())
+}
+
+#[tauri::command]
+fn open_file_url(
+    state: State<Arc<AppState>>,
+    url: String,
+    options: Option<FileOpenOptions>,
+) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(url.trim()).map_err(|_| "file URL 格式无效".to_string())?;
+    if parsed.scheme() != "file" {
+        return Err("只支持本地 file URL".into());
+    }
+    let path = parsed
+        .to_file_path()
+        .map_err(|_| "file URL 无法转换为本地路径".to_string())?;
+    if !path.exists() {
+        return Err("文件不存在".into());
+    }
+    let options = options.unwrap_or_default();
+
+    #[cfg(windows)]
+    {
+        if options.mode.eq_ignore_ascii_case("browser") {
+            let browser = chromium_browser_path().ok_or("未找到 Chrome 或 Edge 浏览器")?;
+            let mut command = std::process::Command::new(browser);
+            if options.allow_file_access {
+                let profile = state.root.join("file-browser-profile");
+                std::fs::create_dir_all(&profile).map_err(|e| e.to_string())?;
+                command.arg("--allow-file-access-from-files");
+                command.arg("--user-data-dir").arg(profile);
+            }
+            command
+                .arg(parsed.as_str())
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        } else {
+            open_path_with_shell(&path)?;
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    std::process::Command::new("open")
+        .arg(&path)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    std::process::Command::new("xdg-open")
+        .arg(&path)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
 fn proxy_status(state: State<Arc<AppState>>) -> Result<serde_json::Value, String> {
     let s = state.settings.lock().clone();
     let url = s.proxy_url.clone();
@@ -1063,6 +1209,8 @@ pub fn run() {
             enter_settings_mode,
             toggle_maximize_window,
             open_data_dir,
+            pick_app_scan_folder,
+            open_file_url,
             proxy_status,
             refresh_app_index,
             ai_chat,

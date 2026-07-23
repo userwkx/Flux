@@ -1,14 +1,11 @@
-(function (global) {
-  "use strict";
+const commands = [];
+const byId = new Map();
 
-  const commands = [];
-  const byId = new Map();
+function cleanId(value) {
+  return String(value || "").trim().toLowerCase();
+}
 
-  function cleanId(value) {
-    return String(value || "").trim().toLowerCase();
-  }
-
-  function cleanPreferenceList(values) {
+function cleanPreferenceList(values) {
     const output = [];
     const seen = new Set();
     for (const value of Array.isArray(values) ? values : []) {
@@ -19,9 +16,9 @@
       output.push(item);
     }
     return output;
-  }
+}
 
-  function register(definition) {
+function register(definition) {
     const id = cleanId(definition?.id);
     if (!id) throw new Error("命令 id 不能为空");
     if (byId.has(id)) throw new Error(`命令已注册: ${id}`);
@@ -45,25 +42,25 @@
     commands.push(command);
     byId.set(id, command);
     return command;
-  }
+}
 
-  function get(id) {
-    return byId.get(cleanId(id)) || null;
-  }
+function get(id) {
+  return byId.get(cleanId(id)) || null;
+}
 
-  function resolve(token) {
+function resolve(token) {
     const value = cleanId(token);
     if (!value) return null;
     return commands.find((command) => command.id === value || command.aliases.includes(value)) || null;
-  }
+}
 
-  function defaults() {
+function defaults() {
     return commands
       .slice()
       .sort((a, b) => a.defaultOrder - b.defaultOrder || a.id.localeCompare(b.id));
-  }
+}
 
-  function normalizePreferences(preferences) {
+function normalizePreferences(preferences) {
     const commandOrder = cleanPreferenceList(preferences?.commandOrder);
     const present = new Set(commandOrder.map((id) => id.toLowerCase()));
     for (const command of defaults()) {
@@ -76,9 +73,9 @@
       commandOrder,
       disabledCommands: cleanPreferenceList(preferences?.disabledCommands),
     };
-  }
+}
 
-  function listAll(preferences) {
+function listAll(preferences) {
     const normalized = normalizePreferences(preferences);
     const disabled = new Set(normalized.disabledCommands.map((id) => id.toLowerCase()));
     const output = [];
@@ -90,18 +87,17 @@
       output.push({ ...command, enabled: !disabled.has(command.id) });
     }
     return output;
-  }
+}
 
-  function list(preferences) {
-    return listAll(preferences).filter((command) => command.enabled);
-  }
+function list(preferences) {
+  return listAll(preferences).filter((command) => command.enabled);
+}
 
-  global.FluxCommands = {
-    register,
-    get,
-    resolve,
-    list,
-    listAll,
-    normalizePreferences,
-  };
-})(window);
+export const commandRegistry = {
+  register,
+  get,
+  resolve,
+  list,
+  listAll,
+  normalizePreferences,
+};

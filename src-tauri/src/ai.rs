@@ -296,7 +296,8 @@ fn today_local_str() -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
-    let weekday = ["周四", "周五", "周六", "周日", "周一", "周二", "周三"]
+    // 1970-01-01 was Thursday, so (days + 4) uses Sunday at index 0.
+    let weekday = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
         [((days + 4).rem_euclid(7)) as usize];
     format!("{y:04}-{m:02}-{d:02}（{weekday}，本地 UTC{offset_hours:+}）")
 }

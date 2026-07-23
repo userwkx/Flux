@@ -1,7 +1,6 @@
-(function (commands) {
-  "use strict";
+import { commandRegistry } from "./registry.js";
 
-  function parseResult(text) {
+function parseResult(text) {
     const raw = String(text || "").trim();
     if (!raw) return null;
     let value = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
@@ -26,9 +25,9 @@
     } catch {
       return { q: "", to: raw, dir: "", type: "", mean: "", from: "", ex: { en: "", zh: "" } };
     }
-  }
+}
 
-  function renderResult(payload, options = {}) {
+function renderResult(payload, options = {}) {
     const { streaming = false } = options;
     const isWord = payload.type === "word" || (!payload.type && (payload.q || "").split(/\s+/).filter(Boolean).length <= 8 && (payload.q || "").length <= 30);
     const card = document.createElement("div");
@@ -87,20 +86,19 @@
       appendSection("由来", [["fy-v", payload.from]]);
     }
     return card;
-  }
+}
 
-  commands.register({
-    id: "fy",
-    aliases: ["tr", "translate", "fanyi"],
-    label: "/fy",
-    title: "翻译",
-    displayPrefix: "Translate",
-    placeholder: "输入词语或句子 · Enter 翻译",
-    followPlaceholder: "继续翻译…",
-    resultKind: "translate",
-    system: '你是词典式翻译助手。根据用户输入自动判断方向（中↔英）。直接输出一个 JSON 对象，不要思考过程，不要 markdown 代码块，不要任何解释说明，只输出 JSON。字段：{"q":"原文","to":"译文（必填）","dir":"en → zh 或 zh → en","type":"word 或 sentence","mean":"含义/释义（type=word时必填，sentence时空字符串）","ex":{"en":"英文例句","zh":"例句中文"},"from":"词源或由来，可空"}。type 为 word 时给出 mean/ex/from；type 为 sentence 时 mean/ex/from 留空，只需 to。',
-    parseResult,
-    renderResult,
-    defaultOrder: 20,
-  });
-})(window.FluxCommands);
+commandRegistry.register({
+  id: "fy",
+  aliases: ["tr", "translate", "fanyi"],
+  label: "/fy",
+  title: "翻译",
+  displayPrefix: "Translate",
+  placeholder: "输入词语或句子 · Enter 翻译",
+  followPlaceholder: "继续翻译…",
+  resultKind: "translate",
+  system: '你是词典式翻译助手。根据用户输入自动判断方向（中↔英）。直接输出一个 JSON 对象，不要思考过程，不要 markdown 代码块，不要任何解释说明，只输出 JSON。字段：{"q":"原文","to":"译文（必填）","dir":"en → zh 或 zh → en","type":"word 或 sentence","mean":"含义/释义（type=word时必填，sentence时空字符串）","ex":{"en":"英文例句","zh":"例句中文"},"from":"词源或由来，可空"}。type 为 word 时给出 mean/ex/from；type 为 sentence 时 mean/ex/from 留空，只需 to。',
+  parseResult,
+  renderResult,
+  defaultOrder: 20,
+});
