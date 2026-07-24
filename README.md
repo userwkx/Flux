@@ -29,8 +29,8 @@ cargo run
 ## 功能
 
 - 全局热键（Alt+Q 等）
-- 开始菜单 + 桌面快捷方式 + `C:\software` 绿色软件
-- 首次完整建立应用与图标缓存，后续按安装来源变化增量同步
+- 开始菜单 + 桌面快捷方式 + 用户配置的便携软件目录
+- 首次完整建立应用与图标缓存，后续检测来源变化并重建应用列表
 - 拼音 / 首字母搜索
 - 图标持久化、最近 10 个应用拖拽排序
 - 托盘图标
@@ -42,7 +42,8 @@ cargo run
 |------|------|
 | `ui/` | HTML/CSS/JS 前端 |
 | `src-tauri/` | Rust 后端 |
-| `settings.json` / `recent.json` / `conversations.json` / `icons-cache/` | 运行时数据 |
+| `settings.json` / `ai-providers.json` / `recent.json` / `conversations.json` / `apps_cache.json` | 本地设置、供应商、历史和索引数据 |
+| `icons-cache/` / `attachments-cache/` / `file-browser-profile/` | 本地图标、附件和文件浏览器缓存 |
 
 ## 配置样例
 

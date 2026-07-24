@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::UNIX_EPOCH;
 
-const CACHE_VERSION: u32 = 4;
+const CACHE_VERSION: u32 = 6;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -270,6 +270,63 @@ foreach ($a in (Get-StartApps)) {
   }) | Out-Null
 }
 
+function Resolve-RegistryPath([object]$value) {
+  if ($null -eq $value) { return '' }
+  $text = [Environment]::ExpandEnvironmentVariables(([string]$value).Trim())
+  if ($text -match '^"([^"]+)"') { return $Matches[1] }
+  if ($text -match '^([^,]+)') { return $Matches[1].Trim() }
+  return $text
+}
+
+function Resolve-RegistryTarget($entry, [string]$name) {
+  $iconTarget = Resolve-RegistryPath $entry.DisplayIcon
+  if ($iconTarget -and $iconTarget -match '(?i)\.exe$' -and (Test-Path -LiteralPath $iconTarget -PathType Leaf)) {
+    return $iconTarget
+  }
+
+  $install = Resolve-RegistryPath $entry.InstallLocation
+  if (-not $install -or -not (Test-Path -LiteralPath $install -PathType Container)) { return '' }
+  $candidates = @(
+    Get-ChildItem -LiteralPath $install -Filter '*.exe' -File -Recurse -Depth 2 -ErrorAction SilentlyContinue |
+      Where-Object { $_.BaseName -notmatch '(?i)(^|[._ -])(setup|install|uninstall|unins|update|crash|helper|repair|remove)([._ -]|$)' }
+  )
+  if ($candidates.Count -eq 0) { return '' }
+  $nameTokens = @($name -split '[^\p{L}\p{Nd}]+' | Where-Object { $_.Length -gt 1 })
+  $sortProperties = @(
+    @{ Expression = {
+      foreach ($token in $nameTokens) {
+        if ($_.BaseName.IndexOf($token, [StringComparison]::OrdinalIgnoreCase) -ge 0) { return 0 }
+      }
+      return 1
+    }}
+    @{ Expression = { $_.FullName.Length }}
+  )
+  return ($candidates | Sort-Object -Property $sortProperties | Select-Object -First 1).FullName
+}
+
+# Some desktop programs register only an uninstall entry, not a Start menu shortcut.
+$uninstallRoots = @(
+  'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+  'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+  'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+)
+foreach ($root in $uninstallRoots) {
+  Get-ChildItem -Path $root -ErrorAction SilentlyContinue | ForEach-Object {
+    try {
+      $entry = Get-ItemProperty -LiteralPath $_.PSPath
+      $name = ([string]$entry.DisplayName).Trim()
+      if (-not $name) { return }
+      $target = Resolve-RegistryTarget $entry $name
+      if (-not $target) { return }
+      $iconSource = Resolve-RegistryPath $entry.DisplayIcon
+      if (-not $iconSource) { $iconSource = $target }
+      $items.Add([pscustomobject]@{
+        Name = $name; Target = $target; Source = 'registry'; IconSource = $iconSource
+      }) | Out-Null
+    } catch {}
+  }
+}
+
 $sh = New-Object -ComObject WScript.Shell
 $deskRoots = @(
   [Environment]::GetFolderPath('Desktop'),
@@ -324,7 +381,9 @@ $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
     .replace("__FLUX_SCAN_DEPTH__", &scan_depth.to_string());
 
     let json = run_ps_b64_json(&script)?;
-    let raw: Vec<RawItem> = serde_json::from_str(&json).map_err(|e| format!("json: {e}"))?;
+    let mut raw: Vec<RawItem> = serde_json::from_str(&json).map_err(|e| format!("json: {e}"))?;
+    // Registry entries provide the real executable for apps whose Start menu entry is a shell ID.
+    raw.sort_by_key(|item| u8::from(item.source.as_deref() != Some("registry")));
 
     let mut list = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
