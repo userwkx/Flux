@@ -197,6 +197,10 @@ body.theme-gradient .glow {
   pointer-events: none;
   opacity: 0;
 }
+.icon-btn.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
 
 .settings-header {
   display: flex;
@@ -4838,7 +4842,7 @@ body.conversation-open .conversation-log > .ai-thread {
 
 .code-block-shell {
   margin: 14px 0 17px;
-  overflow: hidden;
+  overflow: visible;
   border: 0;
   border-radius: 17px;
   background: #f3f3f4;
@@ -4877,8 +4881,11 @@ body.conversation-open .conversation-log > .ai-thread {
   color: #25272b;
 }
 .code-copy {
-  position: relative;
-  inset: auto;
+  position: sticky;
+  top: 8px;
+  z-index: 2;
+  margin-left: auto;
+  margin-bottom: -30px;
   width: 30px;
   height: 30px;
   padding: 0;

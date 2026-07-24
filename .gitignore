@@ -26,6 +26,9 @@
 Thumbs.db
 /playwright-report/
 /test-results/
+.roo/
+plans/
+PR_REPORT.md
 /tests/
 /playwright.config.mjs
 /docs/

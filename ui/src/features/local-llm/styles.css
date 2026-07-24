@@ -1,0 +1,71 @@
+/* 功能5：本地 LLM 预设样式 */
+
+.local-llm-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  margin-bottom: 4px;
+  border-radius: 6px;
+  background: var(--surface, #f5f5f5);
+  cursor: default;
+  transition: background 0.15s;
+}
+
+.local-llm-chip:hover {
+  background: var(--surface-hover, #ebebeb);
+}
+
+.local-llm-chip-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.local-llm-chip-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #1a1a1a);
+}
+
+.local-llm-chip-url {
+  font-size: 11px;
+  color: var(--text-tertiary, #888);
+  font-family: "SF Mono", "Cascadia Code", "Consolas", monospace;
+}
+
+.local-llm-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ccc;
+  flex-shrink: 0;
+  transition: background 0.3s;
+}
+
+.local-llm-dot.is-online {
+  background: #22c55e;
+  box-shadow: 0 0 4px rgba(34, 197, 94, 0.5);
+}
+
+.local-llm-add-btn {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 5px;
+  background: var(--surface, #fff);
+  color: var(--text-primary, #1a1a1a);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.local-llm-add-btn:hover {
+  background: var(--accent, #0066ff);
+  border-color: var(--accent, #0066ff);
+  color: #fff;
+}

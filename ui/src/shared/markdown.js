@@ -130,7 +130,8 @@ export function enhanceCodeBlocks(root) {
       }
     });
     pre.replaceWith(shell);
-    header.append(label, button);
-    shell.append(header, pre);
+    header.append(label);
+    // 功能9：复制按钮移出 header，作为 shell 的直接子元素实现 sticky 跟随滚动
+    shell.append(button, header, pre);
   });
 }
