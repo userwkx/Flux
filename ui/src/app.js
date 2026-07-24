@@ -5,6 +5,11 @@ import { createSettingsController } from "./shell/settings.js";
 import { createChatRenderer } from "./features/chat/renderer.js";
 import { createChatRuntime } from "./features/chat/runtime.js";
 import { enhanceCodeBlocks, escapeHtml, renderMarkdown } from "./shared/markdown.js";
+import { setupBeepFix } from "./features/fix-beep/index.js";
+import { restoreLastConversation } from "./features/session-persistence/index.js";
+import { startSTT, checkSTTMode } from "./features/speech-to-text/index.js";
+import { detectLocalServices, renderLocalPresets, createProviderFromPreset } from "./features/local-llm/index.js";
+import { enhanceTranslatePrompt, hasImageAttachments, imageAttachSummary } from "./commands/translate/image-translate.js";
 import {
   defaultEfforts,
   formatProviderFormat,
@@ -143,6 +148,9 @@ const els = {
   btnProviderContinue: document.getElementById("btn-provider-continue"),
   btnProviderConfirmCancel: document.getElementById("btn-provider-confirm-cancel"),
   providerDialogTitle: document.getElementById("provider-dialog-title"),
+  conversationRetention: document.getElementById("conversation-retention"),
+  btnSttConversation: document.getElementById("btn-stt-conversation"),
+  localLlmList: document.getElementById("local-llm-list"),
 };
 
 const settingsView = createSettingsController(els.pageSettings, {
@@ -275,6 +283,10 @@ let streamRenderFrame = 0;
 let conversations = [];
 let currentConversationId = null;
 let viewerMarkdown = "";
+
+// 功能10：修复系统提示音 — 拦截失焦输入，重定向到正确输入框
+setupBeepFix(() => ({ page, viewerOpen, conversationModeOpen }));
+
 function subseq(hay, needle) {
   if (!hay || !needle) return false;
   let i = 0;
@@ -397,6 +409,22 @@ function showSlashMenu(filter = "") {
 function enterCommandMode(modeId, opts = {}) {
   const def = commandRegistry.get(modeId) || resolveSlashMode(modeId);
   if (!def || !isCommandEnabled(def.id)) return false;
+
+  // 功能1：/config → 打开设置页（通用面板）
+  if (def.resultKind === "settings") {
+    hideSlashMenu();
+    settingsPanel = "general";
+    enterSettingsPage();
+    return true;
+  }
+  // 功能1：/model → 打开 AI 设置面板（模型选择）
+  if (def.resultKind === "model") {
+    hideSlashMenu();
+    settingsPanel = "ai";
+    enterSettingsPage();
+    return true;
+  }
+
   const shouldResize = mode !== "command";
   const { clearBody = true, keepHistory = false } = opts;
   // switching mode resets chat unless keepHistory
@@ -1350,6 +1378,20 @@ function openProviderManager({ create = false } = {}) {
     fillSettingsForm();
     updateProviderDialog();
   }
+  // 功能5：检测并渲染本地 LLM 预设
+  detectLocalServices().then(() => {
+    if (els.localLlmList) {
+      renderLocalPresets(els.localLlmList, (id) => {
+        const provider = createProviderFromPreset(id);
+        if (provider) {
+          settingsSnap.aiProviders.push(provider);
+          editingProviderId = provider.id;
+          fillSettingsForm();
+          updateProviderDialog();
+        }
+      });
+    }
+  });
   requestAnimationFrame(() => els.pvName?.focus());
 }
 
@@ -1861,6 +1903,13 @@ function settingsPayload(extra = {}) {
     aiApiKey: settingsSnap.aiApiKey || "",
     aiModel: settingsSnap.aiModel || "",
     conversationPinned: settingsSnap.conversationPinned === true,
+    conversationRetentionHours: settingsSnap.conversationRetentionHours ?? 0,
+    sttMode: settingsSnap.sttMode || "browser",
+    sttLocalBinPath: settingsSnap.sttLocalBinPath || "",
+    sttLocalModelPath: settingsSnap.sttLocalModelPath || "",
+    sttProviderId: settingsSnap.sttProviderId || "",
+    sttModel: settingsSnap.sttModel || "whisper-1",
+    sttLanguage: settingsSnap.sttLanguage || "auto",
     commandOrder: settingsSnap.commandOrder,
     disabledCommands: settingsSnap.disabledCommands,
     ...extra,
@@ -2188,6 +2237,13 @@ function applySettingsSnap(s) {
     aiApiKey: s.aiApiKey || "",
     aiModel: s.aiModel || "gpt-4o-mini",
     conversationPinned: s.conversationPinned === true,
+    conversationRetentionHours: s.conversationRetentionHours ?? 0,
+    sttMode: s.sttMode || "browser",
+    sttLocalBinPath: s.sttLocalBinPath || "",
+    sttLocalModelPath: s.sttLocalModelPath || "",
+    sttProviderId: s.sttProviderId || "",
+    sttModel: s.sttModel || "whisper-1",
+    sttLanguage: s.sttLanguage || "auto",
     commandOrder: Array.isArray(s.commandOrder) ? s.commandOrder : [],
     disabledCommands: Array.isArray(s.disabledCommands) ? s.disabledCommands : [],
   };
@@ -2215,6 +2271,7 @@ function applySettingsSnap(s) {
   document.body.classList.toggle("ui-classic", homeUi !== "cards");
   markHomeUiCards();
   if (els.webEngineSelect) els.webEngineSelect.value = settingsSnap.webSearchEngine || "auto";
+  if (els.conversationRetention) els.conversationRetention.value = String(settingsSnap.conversationRetentionHours ?? 0);
   if (els.proxyUrlInput) els.proxyUrlInput.value = settingsSnap.proxyUrl || "";
   if (page === "settings") {
     fillSettingsForm();
@@ -2614,6 +2671,73 @@ async function addConversationAttachments(files) {
   }
 }
 
+/** 功能4：AI 输入框粘贴图片 — 从剪贴板提取图片文件并转为附件 */
+function setupPasteImage() {
+  const inputs = [els.conversationInput].filter(Boolean);
+  for (const input of inputs) {
+    input.addEventListener("paste", async (event) => {
+      const files = event.clipboardData?.files;
+      if (!files || !files.length) return;
+      const images = [...files].filter((f) => f.type.startsWith("image/"));
+      if (!images.length) return;
+      event.preventDefault();
+      await addConversationAttachments(images);
+      renderPendingAttachments();
+    });
+  }
+}
+
+/** @type {{ stop: () => void } | null} */
+let sttController = null;
+
+/**
+ * 功能3：初始化语音输入按钮（仅对话模式）
+ * 点击麦克风按钮开始/停止录音
+ */
+function setupSTT() {
+  const btn = els.btnSttConversation;
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    if (sttController) {
+      sttController.stop();
+      sttController = null;
+      btn.classList.remove("is-recording");
+      btn.title = "\u8BED\u97F3\u8F93\u5165";
+      return;
+    }
+    const mode = settingsSnap.sttMode || "browser";
+    const check = checkSTTMode(mode, settingsSnap);
+    if (!check.ok) {
+      console.warn("STT check failed:", check.reason);
+      return;
+    }
+    btn.classList.add("is-recording");
+    btn.title = "\u70B9\u51FB\u505C\u6B62\u5F55\u97F3";
+    try {
+      sttController = await startSTT(mode, settingsSnap, {
+        onResult: (text) => {
+          const input = els.conversationInput;
+          if (input) {
+            const start = input.selectionStart ?? input.value.length;
+            const end = input.selectionEnd ?? start;
+            input.value = input.value.slice(0, start) + text + input.value.slice(end);
+            const pos = start + text.length;
+            input.setSelectionRange(pos, pos);
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+        },
+        onError: (error) => {
+          console.warn("STT error:", error);
+        },
+      });
+    } catch (e) {
+      btn.classList.remove("is-recording");
+      btn.title = "\u8BED\u97F3\u8F93\u5165";
+      sttController = null;
+    }
+  });
+}
+
 function updateConversationPinButton() {
   const pinned = settingsSnap.conversationPinned === true;
   els.btnConversationPin?.classList.toggle("is-active", pinned);
@@ -2855,7 +2979,21 @@ async function sendAi() {
 
   const messages = [];
   if (def?.system) {
-    messages.push({ role: "system", content: def.system });
+    // 功能6：图片翻译 — 动态增强 system prompt
+    let systemContent = def.system;
+    if (def.resultKind === "translate") {
+      const hasImages = chatHistory.some((m) =>
+        Array.isArray(m.attachments) &&
+        m.attachments.some((a) => {
+          const t = (a.type || "").toLowerCase();
+          return t.startsWith("image/") || t === "image";
+        }),
+      );
+      if (hasImages) {
+        systemContent = enhanceTranslatePrompt(def.system, true);
+      }
+    }
+    messages.push({ role: "system", content: systemContent });
   }
   for (const m of chatHistory) {
     messages.push({
@@ -2959,14 +3097,14 @@ function onKey(e) {
   if (els.slashMenu && !els.slashMenu.classList.contains("hidden")) {
     const items = [...els.slashMenu.querySelectorAll(".slash-item")];
     const idx = items.findIndex((el) => el.classList.contains("active"));
-    if (e.key === "ArrowDown") {
+    if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "n")) {
       e.preventDefault();
       const n = items[(idx + 1) % items.length];
       items.forEach((el) => el.classList.remove("active"));
       n?.classList.add("active");
       return;
     }
-    if (e.key === "ArrowUp") {
+    if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "p")) {
       e.preventDefault();
       const n = items[(idx - 1 + items.length) % items.length];
       items.forEach((el) => el.classList.remove("active"));
@@ -3039,6 +3177,13 @@ async function boot() {
         aiApiKey: s.aiApiKey || "",
         aiModel: s.aiModel || "gpt-4o-mini",
         conversationPinned: s.conversationPinned === true,
+        conversationRetentionHours: s.conversationRetentionHours ?? 0,
+        sttMode: s.sttMode || "browser",
+        sttLocalBinPath: s.sttLocalBinPath || "",
+        sttLocalModelPath: s.sttLocalModelPath || "",
+        sttProviderId: s.sttProviderId || "",
+        sttModel: s.sttModel || "whisper-1",
+        sttLanguage: s.sttLanguage || "auto",
         commandOrder: Array.isArray(s.commandOrder) ? s.commandOrder : [],
         disabledCommands: Array.isArray(s.disabledCommands) ? s.disabledCommands : [],
       };
@@ -3061,6 +3206,15 @@ async function boot() {
     }
     active = 0;
     render();
+    setupPasteImage();
+    setupSTT();
+    // 功能7：会话保留时间变更 → 持久化
+    if (els.conversationRetention) {
+      els.conversationRetention.addEventListener("change", async () => {
+        settingsSnap.conversationRetentionHours = Number(els.conversationRetention.value) || 0;
+        await api.setSettings(settingsPayload());
+      });
+    }
     // defer window mode + dropdown init to next tick so render is not blocked
     requestAnimationFrame(() => {
       if (homeUi === "cards") {
@@ -3071,6 +3225,10 @@ async function boot() {
       scheduleFit();
       if (window.CustomDropdown) window.CustomDropdown.mountAll();
       els.q?.focus();
+      // 功能7：自动恢复最近的有效会话
+      if (conversations.length > 0) {
+        restoreLastConversation(conversations, settingsSnap, openConversation);
+      }
     });
   } catch (e) {
     console.warn("boot", e);

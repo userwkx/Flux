@@ -5,6 +5,7 @@ mod icons;
 mod pinyin_util;
 mod recent;
 mod settings;
+mod stt;
 mod web;
 
 use apps::AppItem;
@@ -18,6 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use stt::{stt_local_transcribe, stt_online_transcribe};
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
@@ -1331,7 +1333,9 @@ pub fn run() {
             ai_chat,
             stop_ai,
             ai_fetch_models,
-            set_hotkey
+            set_hotkey,
+            stt_online_transcribe,
+            stt_local_transcribe
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

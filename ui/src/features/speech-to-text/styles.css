@@ -1,0 +1,85 @@
+/* ===== 麦克风按钮 ===== */
+.stt-mic-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted, #888);
+  cursor: pointer;
+  font-size: 16px;
+  transition: background 0.15s, color 0.15s, transform 0.15s;
+  flex-shrink: 0;
+}
+.stt-mic-btn:hover {
+  background: var(--accent-soft, rgba(0,0,0,0.06));
+  color: var(--accent-strong, #0078d4);
+}
+.stt-mic-btn.is-recording {
+  background: #e74c3c;
+  color: #fff;
+  animation: stt-pulse 1.2s ease-in-out infinite;
+}
+.stt-mic-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+@keyframes stt-pulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(231,76,60,0.4); }
+  50% { transform: scale(1.08); box-shadow: 0 0 0 8px rgba(231,76,60,0); }
+}
+
+/* ===== STT 状态提示 ===== */
+.stt-status {
+  font-size: 12px;
+  color: var(--text-muted, #888);
+  margin-left: 8px;
+  white-space: nowrap;
+}
+
+/* ===== STT 配置面板 ===== */
+.stt-config-section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border, #e0e0e0);
+}
+.stt-config-section .s-row-title {
+  font-weight: 600;
+}
+.stt-config-section .s-select {
+  max-width: 200px;
+}
+.stt-config-sub {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: var(--bg-soft, #f5f5f5);
+  border-radius: 6px;
+}
+.stt-config-sub .s-row {
+  margin-top: 6px;
+}
+.stt-download-link {
+  color: var(--accent-strong, #0078d4);
+  text-decoration: none;
+  font-size: 13px;
+}
+.stt-download-link:hover {
+  text-decoration: underline;
+}
+.stt-test-btn {
+  margin-top: 8px;
+}
+.stt-test-result {
+  margin-top: 6px;
+  font-size: 13px;
+  padding: 6px 10px;
+  background: var(--bg-card, #fff);
+  border-radius: 4px;
+  border: 1px solid var(--border, #e0e0e0);
+  white-space: pre-wrap;
+  word-break: break-all;
+}

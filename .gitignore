@@ -27,3 +27,5 @@ Thumbs.db
 /playwright-report/
 /test-results/
 .roo/
+plans/
+PR_REPORT.md

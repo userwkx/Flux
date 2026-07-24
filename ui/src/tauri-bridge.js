@@ -81,5 +81,7 @@
     onAiDone: (cb) => listen("ai-done", cb),
     onAiError: (cb) => listen("ai-error", cb),
     onAiTool: (cb) => listen("ai-tool", cb),
+    sttOnlineTranscribe: (args) => invoke("stt_online_transcribe", args),
+    sttLocalTranscribe: (args) => invoke("stt_local_transcribe", args),
   };
 })();

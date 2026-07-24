@@ -67,6 +67,18 @@
         </div>
         <div class="s-row">
           <div class="s-row-text">
+            <div class="s-row-title">会话保留时间</div>
+            <div class="s-row-desc">重新打开窗口时自动恢复指定时间内的最近会话</div>
+          </div>
+          <select id="conversation-retention" class="s-input" style="max-width:140px" aria-label="会话保留时间">
+            <option value="0">永久保留</option>
+            <option value="1">1 小时</option>
+            <option value="24">24 小时</option>
+            <option value="168">7 天</option>
+          </select>
+        </div>
+        <div class="s-row">
+          <div class="s-row-text">
             <div class="s-row-title">配置目录</div>
             <div class="s-row-desc" id="data-dir-label">settings.json / recent.json</div>
           </div>
@@ -165,6 +177,7 @@
       <aside class="provider-catalog">
         <div class="provider-catalog-title">供应商</div>
         <div class="provider-list" id="provider-list"></div>
+        <div id="local-llm-list"></div>
       </aside>
       <main class="provider-editor" id="provider-editor">
         <div class="provider-block-head">

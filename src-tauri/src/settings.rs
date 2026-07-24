@@ -187,6 +187,27 @@ pub struct Settings {
     pub translate_no_think: bool,
     #[serde(default)]
     pub conversation_pinned: bool,
+    /// conversation retention in hours; 0 = forever
+    #[serde(default = "default_conversation_retention_hours")]
+    pub conversation_retention_hours: u64,
+    /// STT: speech-to-text mode
+    #[serde(default = "default_stt_mode")]
+    pub stt_mode: String,
+    /// STT: local whisper.cpp binary path
+    #[serde(default)]
+    pub stt_local_bin_path: String,
+    /// STT: local whisper model (.bin) path
+    #[serde(default)]
+    pub stt_local_model_path: String,
+    /// STT: online provider id
+    #[serde(default)]
+    pub stt_provider_id: String,
+    /// STT: online model name (e.g. whisper-1)
+    #[serde(default = "default_stt_model")]
+    pub stt_model: String,
+    /// STT: language hint (zh / en / auto)
+    #[serde(default = "default_stt_language")]
+    pub stt_language: String,
     #[serde(default)]
     pub command_order: Vec<String>,
     #[serde(default)]
@@ -221,6 +242,22 @@ fn default_app_scan_depth() -> u8 {
     2
 }
 
+fn default_conversation_retention_hours() -> u64 {
+    0 // 0 = forever (never auto-expire)
+}
+
+fn default_stt_mode() -> String {
+    "browser".into()
+}
+
+fn default_stt_model() -> String {
+    "whisper-1".into()
+}
+
+fn default_stt_language() -> String {
+    "auto".into()
+}
+
 pub fn new_id() -> String {
     let n = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -251,6 +288,13 @@ impl Default for Settings {
             translate_model: String::new(),
             translate_no_think: true,
             conversation_pinned: false,
+            conversation_retention_hours: default_conversation_retention_hours(),
+            stt_mode: default_stt_mode(),
+            stt_local_bin_path: String::new(),
+            stt_local_model_path: String::new(),
+            stt_provider_id: String::new(),
+            stt_model: default_stt_model(),
+            stt_language: default_stt_language(),
             command_order: Vec::new(),
             disabled_commands: Vec::new(),
         }
