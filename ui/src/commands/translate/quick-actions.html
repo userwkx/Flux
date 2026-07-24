@@ -1,0 +1,24 @@
+<div class="fy-quick-actions">
+  <div class="ai-more-wrap fy-more-wrap">
+    <button type="button" class="ai-more-trigger" data-fy-more title="更多" aria-label="更多翻译选项" aria-haspopup="menu" aria-expanded="false"><span></span><span></span><span></span></button>
+    <div class="ai-more-menu" data-fy-more-menu role="menu" aria-hidden="true">
+      <button type="button" class="ai-more-item" data-fy-new role="menuitem">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="ai-more-copy">新翻译</span>
+      </button>
+      <button type="button" class="ai-more-item" data-fy-history role="menuitem" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>
+        <span class="ai-more-copy">历史</span>
+      </button>
+    </div>
+  </div>
+  <div class="conversation-panel hidden" data-fy-history-panel role="dialog" aria-modal="true" aria-label="翻译历史">
+    <div class="conversation-dialog">
+      <div class="conversation-panel-head">
+        <div><span>翻译历史</span><small>最多保留 10 条</small></div>
+        <button type="button" class="ai-head-icon" data-fy-history-close title="关闭" aria-label="关闭">×</button>
+      </div>
+      <div class="conversation-list" data-fy-history-list></div>
+    </div>
+  </div>
+</div>

@@ -120,6 +120,7 @@ struct AppState {
     recent: Mutex<Vec<RecentItem>>,
     settings: Mutex<Settings>,
     conversations: Mutex<Vec<Conversation>>,
+    translation_conversations: Mutex<Vec<Conversation>>,
     hotkey: Mutex<String>,
     index_status: Mutex<IndexStatus>,
     icon_io: Mutex<()>,
@@ -160,6 +161,9 @@ impl AppState {
     }
     fn conversations_path(&self) -> PathBuf {
         self.root.join("conversations.json")
+    }
+    fn translation_conversations_path(&self) -> PathBuf {
+        self.root.join("translation-conversations.json")
     }
     fn attachments_dir(&self) -> PathBuf {
         self.root.join("attachments-cache")
@@ -411,8 +415,9 @@ fn get_conversations(state: State<Arc<AppState>>) -> Vec<Conversation> {
 #[tauri::command]
 fn save_conversation(
     state: State<Arc<AppState>>,
-    conversation: Conversation,
+    mut conversation: Conversation,
 ) -> Result<Vec<Conversation>, String> {
+    conversation.mode = "ai".into();
     let mut items = state.conversations.lock();
     conversations::upsert(&state.conversations_path(), &mut items, conversation)?;
     conversations::cleanup_attachments(&state.attachments_dir(), &items);
@@ -427,6 +432,40 @@ fn delete_conversation(
     let mut items = state.conversations.lock();
     conversations::remove(&state.conversations_path(), &mut items, id.trim())?;
     conversations::cleanup_attachments(&state.attachments_dir(), &items);
+    Ok(items.clone())
+}
+
+#[tauri::command]
+fn get_translation_conversations(state: State<Arc<AppState>>) -> Vec<Conversation> {
+    state.translation_conversations.lock().clone()
+}
+
+#[tauri::command]
+fn save_translation_conversation(
+    state: State<Arc<AppState>>,
+    mut conversation: Conversation,
+) -> Result<Vec<Conversation>, String> {
+    conversation.mode = "fy".into();
+    let mut items = state.translation_conversations.lock();
+    conversations::upsert(
+        &state.translation_conversations_path(),
+        &mut items,
+        conversation,
+    )?;
+    Ok(items.clone())
+}
+
+#[tauri::command]
+fn delete_translation_conversation(
+    state: State<Arc<AppState>>,
+    id: String,
+) -> Result<Vec<Conversation>, String> {
+    let mut items = state.translation_conversations.lock();
+    conversations::remove(
+        &state.translation_conversations_path(),
+        &mut items,
+        id.trim(),
+    )?;
     Ok(items.clone())
 }
 
@@ -1269,6 +1308,52 @@ fn open_file_url(
 }
 
 #[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(url.trim()).map_err(|_| "链接格式无效".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        return Err("只支持 HTTP(S) 链接".into());
+    }
+
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::Shell::ShellExecuteW;
+
+        let operation: Vec<u16> = "open".encode_utf16().chain(Some(0)).collect();
+        let target: Vec<u16> = parsed.as_str().encode_utf16().chain(Some(0)).collect();
+        let result = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                operation.as_ptr(),
+                target.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                1,
+            )
+        };
+        if (result as isize) <= 32 {
+            return Err(format!(
+                "无法使用默认浏览器打开链接（Windows 错误码 {}）",
+                result as isize
+            ));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    std::process::Command::new("open")
+        .arg(parsed.as_str())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    std::process::Command::new("xdg-open")
+        .arg(parsed.as_str())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
 fn proxy_status(state: State<Arc<AppState>>) -> Result<serde_json::Value, String> {
     let s = state.settings.lock().clone();
     let url = s.proxy_url.clone();
@@ -1363,7 +1448,19 @@ pub fn run() {
     let _ = settings::save_provider_catalog(&root.join("ai-providers.json"), &settings);
     let recent_list = recent::load(&root.join("recent.json"));
     let _ = recent::save(&root.join("recent.json"), &recent_list);
-    let conversation_list = conversations::load(&root.join("conversations.json"));
+    let conversations_path = root.join("conversations.json");
+    let translation_conversations_path = root.join("translation-conversations.json");
+    let mut conversation_list = conversations::load(&conversations_path);
+    let mut translation_conversation_list = conversations::load(&translation_conversations_path);
+    let legacy_translation_list = conversations::take_mode(&mut conversation_list, "fy");
+    if !legacy_translation_list.is_empty() {
+        translation_conversation_list.extend(legacy_translation_list);
+        let _ = conversations::replace(&conversations_path, &mut conversation_list);
+        let _ = conversations::replace(
+            &translation_conversations_path,
+            &mut translation_conversation_list,
+        );
+    }
     let cache = apps::load_cache(&root.join("apps_cache.json"));
     let cache_ready = cache.current && icons::cache_is_warm(&root.join("icons-cache"), &cache.apps);
     let initial_status = if cache_ready {
@@ -1383,6 +1480,7 @@ pub fn run() {
         recent: Mutex::new(recent_list),
         settings: Mutex::new(settings),
         conversations: Mutex::new(conversation_list),
+        translation_conversations: Mutex::new(translation_conversation_list),
         hotkey: Mutex::new("Alt+Q".into()),
         index_status: Mutex::new(initial_status),
         icon_io: Mutex::new(()),
@@ -1404,6 +1502,9 @@ pub fn run() {
             get_conversations,
             save_conversation,
             delete_conversation,
+            get_translation_conversations,
+            save_translation_conversation,
+            delete_translation_conversation,
             save_attachment,
             set_settings,
             launch_app,
@@ -1422,6 +1523,7 @@ pub fn run() {
             open_data_dir,
             pick_app_scan_folder,
             open_file_url,
+            open_external_url,
             proxy_status,
             refresh_app_index,
             ai_chat,

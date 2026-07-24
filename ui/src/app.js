@@ -26,9 +26,47 @@ const chatRuntime = createChatRuntime(api);
 await mountShell(document.getElementById("app"));
 const commandHost = createCommandHost({
   host: document.getElementById("command-view-host"),
-  context: { api },
+  quickActionsHost: document.getElementById("quick-command-actions-host"),
+  context: {
+    api,
+    openConversation,
+    startNewConversation,
+    getCurrentConversationId: () => currentConversationId,
+    clearCurrentConversationId: (id) => {
+      if (currentConversationId === id) currentConversationId = null;
+    },
+  },
 });
 await commandHost.prepareAll(commandRegistry.listAll());
+
+function openExternalLink(event) {
+  const element = event.target instanceof Element ? event.target : null;
+  const link = element?.closest("a[href]");
+  if (!link) return;
+  let url;
+  try {
+    url = new URL(link.href);
+  } catch {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.type === "click" && event.button === 0) {
+    api.openExternalUrl(url.href).catch((error) => console.warn("open external link", error));
+  }
+}
+
+// Markdown references must never replace the launcher WebView.
+document.addEventListener("click", openExternalLink, true);
+document.addEventListener("auxclick", openExternalLink, true);
 
 const els = {
   q: document.getElementById("q"),
@@ -862,7 +900,7 @@ function render() {
   els.listSection?.classList.toggle("hidden", !showList);
   els.idleHint?.classList.toggle("hidden", true);
   els.aiSection?.classList.toggle("hidden", !showAi);
-  const commandController = commandHost.activate(showCustom ? def : null);
+  const commandController = commandHost.activate(def);
   if (showCustom) commandController?.render?.();
 
   if (els.q) {
@@ -2306,10 +2344,17 @@ function conversationTitle(messages) {
 async function persistCurrentConversation() {
   if (!chatHistory.some((message) => message.role === "assistant")) return;
   if (!currentConversationId) currentConversationId = createConversationId();
-  conversations = await api.saveConversation({
+  const modeId = currentModeDef()?.id || "ai";
+  const saveConversation = modeId === "fy"
+    ? api.saveTranslationConversation
+    : modeId === "ai"
+      ? api.saveConversation
+      : null;
+  if (!saveConversation) return;
+  const saved = await saveConversation({
     id: currentConversationId,
     title: conversationTitle(chatHistory),
-    mode: currentModeDef()?.id || "ai",
+    mode: modeId,
     updatedAt: Date.now(),
     messages: chatHistory.map((message) => ({
       role: message.role,
@@ -2317,7 +2362,10 @@ async function persistCurrentConversation() {
       attachments: Array.isArray(message.attachments) ? message.attachments : [],
     })),
   });
-  renderConversations();
+  if (modeId === "ai") {
+    conversations = saved;
+    renderConversations();
+  }
 }
 
 function setConversationPanel(open) {
@@ -3060,6 +3108,7 @@ function onKey(e) {
       backFromSettings();
       return;
     }
+    if (commandHost.handleEscape()) return;
     if (els.aiMoreMenu?.classList.contains("is-open")) {
       setAiMoreMenu(false);
       els.btnAiMore?.focus();

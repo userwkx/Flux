@@ -1,5 +1,6 @@
 import { commandRegistry } from "../registry.js";
-import { loadStyle } from "../../shared/template.js";
+import { createLifecycle, listen } from "../../shared/dom.js";
+import { loadStyle, mountTemplate } from "../../shared/template.js";
 
 await loadStyle(new URL("./styles.css", import.meta.url));
 
@@ -91,6 +92,54 @@ function renderResult(payload, options = {}) {
   return card;
 }
 
+function formatHistoryTime(value) {
+  return new Date(Number(value) || Date.now()).toLocaleString([], {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function renderHistoryList(container, conversations, currentId, onOpen, onDelete, signal) {
+  container.replaceChildren();
+  if (!conversations.length) {
+    const empty = document.createElement("div");
+    empty.className = "conversation-empty";
+    empty.textContent = "暂无翻译历史";
+    container.appendChild(empty);
+    return;
+  }
+  for (const conversation of conversations) {
+    const row = document.createElement("div");
+    row.className = `conversation-row${conversation.id === currentId ? " is-active" : ""}`;
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "conversation-open";
+    const title = document.createElement("div");
+    title.className = "conversation-title";
+    title.textContent = conversation.title || "新翻译";
+    const meta = document.createElement("div");
+    meta.className = "conversation-meta";
+    meta.textContent = `翻译 · ${formatHistoryTime(conversation.updatedAt)}`;
+    open.append(title, meta);
+    listen(open, "click", () => onOpen(conversation), undefined, signal);
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "conversation-delete";
+    remove.textContent = "×";
+    remove.title = "删除翻译";
+    remove.setAttribute("aria-label", "删除翻译");
+    listen(remove, "click", (event) => {
+      event.stopPropagation();
+      onDelete(conversation.id);
+    }, undefined, signal);
+    row.append(open, remove);
+    container.appendChild(row);
+  }
+}
+
 export const translateCommand = commandRegistry.register({
   id: "fy",
   aliases: ["tr", "translate", "fanyi"],
@@ -103,5 +152,97 @@ export const translateCommand = commandRegistry.register({
   system: '你是词典式翻译助手。根据用户输入自动判断方向（中↔英）。直接输出一个 JSON 对象，不要思考过程，不要 markdown 代码块，不要任何解释说明，只输出 JSON。字段：{"q":"原文","to":"译文（必填）","dir":"en → zh 或 zh → en","type":"word 或 sentence","mean":"含义/释义（type=word时必填，sentence时空字符串）","ex":{"en":"英文例句","zh":"例句中文"},"from":"词源或由来，可空"}。type 为 word 时给出 mean/ex/from；type 为 sentence 时 mean/ex/from 留空，只需 to。',
   parseResult,
   renderResult,
+  async mountQuickActions(host, context) {
+    await mountTemplate(host, new URL("./quick-actions.html", import.meta.url));
+    const lifecycle = createLifecycle();
+    const root = host.querySelector(".fy-quick-actions");
+    const more = root?.querySelector("[data-fy-more]");
+    const menu = root?.querySelector("[data-fy-more-menu]");
+    const newTranslation = root?.querySelector("[data-fy-new]");
+    const history = root?.querySelector("[data-fy-history]");
+    const panel = root?.querySelector("[data-fy-history-panel]");
+    const close = root?.querySelector("[data-fy-history-close]");
+    const list = root?.querySelector("[data-fy-history-list]");
+    let conversations = [];
+
+    function setMenu(open) {
+      const visible = !!open;
+      menu?.classList.toggle("is-open", visible);
+      menu?.setAttribute("aria-hidden", String(!visible));
+      more?.setAttribute("aria-expanded", String(visible));
+    }
+
+    function setPanel(open) {
+      const visible = !!open;
+      panel?.classList.toggle("hidden", !visible);
+      history?.setAttribute("aria-expanded", String(visible));
+      if (visible) renderHistoryList(list, conversations, context.getCurrentConversationId(), openConversation, deleteConversation, lifecycle.signal);
+    }
+
+    function openConversation(conversation) {
+      setPanel(false);
+      context.openConversation(conversation);
+    }
+
+    async function deleteConversation(id) {
+      try {
+        conversations = await context.api.deleteTranslationConversation(id);
+        context.clearCurrentConversationId(id);
+        renderHistoryList(list, conversations, context.getCurrentConversationId(), openConversation, deleteConversation, lifecycle.signal);
+      } catch (error) {
+        console.warn("delete translation conversation", error);
+      }
+    }
+
+    async function openHistory() {
+      try {
+        conversations = await context.api.getTranslationConversations();
+      } catch (error) {
+        console.warn("load translation conversations", error);
+        conversations = [];
+      }
+      setMenu(false);
+      setPanel(true);
+    }
+
+    listen(more, "click", () => setMenu(!menu?.classList.contains("is-open")), undefined, lifecycle.signal);
+    listen(newTranslation, "click", () => {
+      setMenu(false);
+      context.startNewConversation();
+    }, undefined, lifecycle.signal);
+    listen(history, "click", openHistory, undefined, lifecycle.signal);
+    listen(close, "click", () => setPanel(false), undefined, lifecycle.signal);
+    listen(document, "mousedown", (event) => {
+      if (menu?.classList.contains("is-open") && !root?.contains(event.target)) setMenu(false);
+      if (!panel?.classList.contains("hidden") && !panel.querySelector(".conversation-dialog")?.contains(event.target)) {
+        setPanel(false);
+      }
+    }, undefined, lifecycle.signal);
+
+    return {
+      setVisible(visible) {
+        if (!visible) {
+          setMenu(false);
+          setPanel(false);
+        }
+      },
+      onEscape() {
+        if (!panel?.classList.contains("hidden")) {
+          setPanel(false);
+          return true;
+        }
+        if (menu?.classList.contains("is-open")) {
+          setMenu(false);
+          more?.focus();
+          return true;
+        }
+        return false;
+      },
+      unmount() {
+        lifecycle.dispose();
+        host.replaceChildren();
+      },
+    };
+  },
   defaultOrder: 20,
 });

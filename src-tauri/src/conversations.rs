@@ -46,6 +46,24 @@ fn save(path: &Path, items: &[Conversation]) -> Result<(), String> {
     fs::write(path, data).map_err(|e| e.to_string())
 }
 
+pub fn replace(path: &Path, items: &mut Vec<Conversation>) -> Result<(), String> {
+    normalize(items);
+    save(path, items)
+}
+
+pub fn take_mode(items: &mut Vec<Conversation>, mode: &str) -> Vec<Conversation> {
+    let mut taken = Vec::new();
+    items.retain(|item| {
+        if item.mode == mode {
+            taken.push(item.clone());
+            false
+        } else {
+            true
+        }
+    });
+    taken
+}
+
 pub fn upsert(
     path: &Path,
     items: &mut Vec<Conversation>,

@@ -45,6 +45,11 @@
     saveConversation: (conversation) =>
       invoke("save_conversation", { conversation }),
     deleteConversation: (id) => invoke("delete_conversation", { id }),
+    getTranslationConversations: () => invoke("get_translation_conversations"),
+    saveTranslationConversation: (conversation) =>
+      invoke("save_translation_conversation", { conversation }),
+    deleteTranslationConversation: (id) =>
+      invoke("delete_translation_conversation", { id }),
     saveAttachment: (upload) => invoke("save_attachment", { upload }),
     setConversationPin: (pinned) => invoke("set_conversation_pin", { pinned }),
     setConversationActive: (active) => invoke("set_conversation_active", { active }),
@@ -63,6 +68,7 @@
     openDataDir: () => invoke("open_data_dir"),
     pickAppScanFolder: () => invoke("pick_app_scan_folder"),
     openFileUrl: (url, options) => invoke("open_file_url", { url, options: options || null }),
+    openExternalUrl: (url) => invoke("open_external_url", { url }),
     proxyStatus: () => invoke("proxy_status"),
     refreshIndex: () => invoke("refresh_app_index"),
     setHotkey: (hotkey) => invoke("set_hotkey", { hotkey }),
